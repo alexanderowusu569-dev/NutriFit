@@ -431,6 +431,8 @@ _setup_db()
 def friendly(e):
     """A short, safe explanation for an AI error (the raw error stays out of the page)."""
     t = str(e).lower()
+    if "no module named" in t:
+        return "a required package isn't installed, so please tell the app owner"
     if "429" in t or "rate limit" in t or "resource_exhausted" in t or "quota" in t:
         return "the AI service is busy right now, so please wait a minute and try again"
     if "404" in t or "not_found" in t or "is not found" in t:
@@ -600,6 +602,8 @@ def vision_note():
         return "Analysed with Google Gemini."
     if used == "Groq" and problem:
         return f"Google Gemini wasn't available ({problem}), so the backup AI was used."
+    if used == "Groq" and not GEMINI_KEY:
+        return "Google Gemini isn't set up yet (no GEMINI_API_KEY found), so the backup AI was used."
     return ""
 
 
