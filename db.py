@@ -33,8 +33,8 @@ PG = bool(PG_URL)
 
 
 @contextmanager
-def _db():
-    """One connection per call; commits on success, rolls back on error."""
+def _connection():
+    """One raw connection; commits on success, rolls back on error."""
     if PG:
         import psycopg
         from psycopg.rows import dict_row
@@ -51,8 +51,36 @@ def _db():
             conn.close()
 
 
+_ready = False
+
+
+def _ensure():
+    """Create the tables once per process, the first time the database is used."""
+    global _ready
+    if not _ready:
+        _create_tables()
+        _ready = True
+
+
+@contextmanager
+def _db():
+    _ensure()
+    with _connection() as conn:
+        yield conn
+
+
 def _run(conn, sql, params=()):
-    return conn.execute(sql.replace("?", "%s") if PG else sql, params)
+    """Run a query. If a table is missing, create the tables and try once more."""
+    sql = sql.replace("?", "%s") if PG else sql
+    try:
+        return conn.execute(sql, params)
+    except Exception as e:
+        if type(e).__name__ != "UndefinedTable" and "no such table" not in str(e):
+            raise
+        if PG:
+            conn.rollback()
+        _create_tables()
+        return conn.execute(sql, params)
 
 
 def _now():
@@ -63,29 +91,36 @@ def _hash(pin, salt):
     return hashlib.pbkdf2_hmac("sha256", pin.encode(), salt, 200_000)
 
 
-def init():
+def _create_tables():
     pk, idt, blob = ("BIGSERIAL PRIMARY KEY", "BIGINT", "BYTEA") if PG else ("INTEGER PRIMARY KEY", "INTEGER", "BLOB")
     unique_name = "" if PG else " UNIQUE COLLATE NOCASE"
-    with _db() as conn:
-        _run(conn, f"""CREATE TABLE IF NOT EXISTS users (
+    with _connection() as conn:
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS users (
             id {pk}, name TEXT NOT NULL{unique_name}, salt {blob} NOT NULL, pin_hash {blob} NOT NULL,
             created TEXT NOT NULL, failed INTEGER NOT NULL DEFAULT 0, locked_until TEXT)""")
-        _run(conn, f"""CREATE TABLE IF NOT EXISTS items (
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS items (
             id {pk}, user_id {idt} NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, meta TEXT,
             created TEXT NOT NULL, updated TEXT NOT NULL)""")
-        _run(conn, f"""CREATE TABLE IF NOT EXISTS profiles (
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS profiles (
             user_id {idt} PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             data TEXT NOT NULL, updated TEXT NOT NULL)""")
-        _run(conn, "CREATE INDEX IF NOT EXISTS items_by_user ON items (user_id, kind, updated)")
+        conn.execute("CREATE INDEX IF NOT EXISTS items_by_user ON items (user_id, kind, updated)")
         if PG:
-            _run(conn, "CREATE UNIQUE INDEX IF NOT EXISTS users_name_lower ON users (lower(name))")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_name_lower ON users (lower(name))")
         else:  # upgrade a database made by an earlier version
             have = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
             if "failed" not in have:
                 conn.execute("ALTER TABLE users ADD COLUMN failed INTEGER NOT NULL DEFAULT 0")
             if "locked_until" not in have:
                 conn.execute("ALTER TABLE users ADD COLUMN locked_until TEXT")
+
+
+def init():
+    """Create the tables now (they are also created automatically on first use)."""
+    global _ready
+    _create_tables()
+    _ready = True
 
 
 # ---------- Accounts ----------
