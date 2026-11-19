@@ -1,5 +1,6 @@
 streamlit>=1.40
 groq
+google-genai
 reportlab
 Pillow
 opencv-python-headless
