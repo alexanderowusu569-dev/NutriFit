@@ -37,7 +37,7 @@ groq_client = Groq(api_key=get_secret("GROQ_API_KEY"))
 AI_MODEL = get_secret("AI_MODEL", "qwen/qwen3.8-27b")
 FOOD_VISION_MODEL = get_secret("VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 GEMINI_KEY = get_secret("GEMINI_API_KEY")
-GEMINI_MODEL = get_secret("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = get_secret("GEMINI_MODEL", "gemini-3.5-flash-lite")
 
 # ---------- State ----------
 if "page" not in st.session_state:
@@ -565,7 +565,73 @@ def _gemini_client(key):
     return genai.Client(api_key=key)
 
 
+
 def vision_ai(system, text, photo, max_tokens=1200, temperature=0.2, max_side=1280, json_mode=False):
+    """Use Gemini for image analysis. Only use Groq if Gemini is not configured."""
+    image = prepare_image(photo, max_side)
+    st.session_state.gemini_error = ""
+
+    if GEMINI_KEY:
+        try:
+            from google.genai import types
+
+            config = types.GenerateContentConfig(
+                system_instruction=system or None,
+                temperature=temperature,
+                response_mime_type="application/json" if json_mode else None
+            )
+
+            reply = _gemini_client(GEMINI_KEY).models.generate_content(
+                model=GEMINI_MODEL,
+                config=config,
+                contents=[
+                    types.Part.from_bytes(
+                        data=image,
+                        mime_type="image/jpeg"
+                    ),
+                    text
+                ]
+            )
+
+            if not reply.text:
+                raise ValueError("Gemini returned an empty reply.")
+
+            st.session_state.vision_used = "Gemini"
+            return reply.text
+
+        except Exception as e:
+            print(f"Gemini scanner error ({GEMINI_MODEL}): {e}", flush=True)
+            st.session_state.gemini_error = friendly(e)
+            raise RuntimeError(f"Gemini scanner failed: {e}") from e
+
+    # Groq is only used when no Gemini key is configured.
+    encoded = base64.b64encode(image).decode("utf-8")
+
+    messages = (
+        [{"role": "system", "content": system}] if system else []
+    ) + [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": text},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{encoded}"
+                }
+            }
+        ]
+    }]
+
+    response = groq_client.chat.completions.create(
+        model=FOOD_VISION_MODEL,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens
+    )
+
+    st.session_state.vision_used = "Groq"
+    return response.choices[0].message.content
+
     """Ask a vision model about a photo: Google Gemini first when a key is set, Groq as the backup."""
     image = prepare_image(photo, max_side)
     st.session_state.gemini_error = ""
