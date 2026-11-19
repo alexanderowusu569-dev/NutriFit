@@ -9,7 +9,8 @@ import base64
 import hashlib
 import os
 import time
-from datetime import date
+import urllib.request
+from datetime import date, timedelta
 import streamlit as st
 from groq import Groq
 
@@ -290,6 +291,7 @@ h3{font-size:1.15rem!important;font-weight:700!important;}
   letter-spacing:.05em;text-transform:uppercase;padding:.25rem .65rem;border-radius:99px;}
 .tip p{margin:0;}
 .st-key-card_scan{--c:#F4A93B;}.st-key-card_ask{--c:#2E8B57;}.st-key-card_fit{--c:#4A7FB5;}
+.st-key-card_barcode{--c:#E07A3F;}.st-key-card_profile{--c:#C45C8A;}
 .st-key-card_nutri{--c:#2A9D8F;}.st-key-card_allergy{--c:#D9534F;}.st-key-card_saved{--c:#8E6BB0;}
 [class*="st-key-card_"]{border-top:4px solid var(--c,var(--brand));}
 .icon{display:grid;place-items:center;width:46px;height:46px;border-radius:12px;margin-bottom:.8rem;
@@ -342,6 +344,21 @@ h2.section::before{content:"";width:6px;height:1.15em;border-radius:4px;backgrou
 .about ul{margin:.2rem 0 0 1.1rem;padding:0;}
 @media(max-width:800px){.about{grid-template-columns:1fr;}}
 
+/* Product */
+.prod{display:flex;gap:1rem;align-items:center;margin-bottom:.8rem;}
+.prod img{width:96px;height:96px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:12px;padding:4px;}
+.prod h3{margin:0 0 .15rem;font-size:1.2rem!important;}
+.prod p{margin:0;color:var(--muted)!important;}
+.score-row{display:flex;flex-wrap:wrap;gap:.7rem;margin:.8rem 0;}
+.score{display:flex;align-items:center;gap:.6rem;background:#fff;border:1px solid var(--line);border-radius:12px;padding:.55rem .85rem;}
+.score i.grade{display:grid;place-items:center;flex:none;width:34px;height:34px;border-radius:8px;font-style:normal;font-weight:800;}
+.score span{font-size:.85rem;color:var(--muted);line-height:1.25;}
+.score b{display:block;color:var(--ink);}
+.tagrow{display:flex;flex-wrap:wrap;gap:.4rem;margin:.2rem 0 .6rem;}
+.tag{background:var(--tint);border-radius:99px;padding:.2rem .7rem;font-size:.85rem;}
+.tag.warn{background:#FBE3E1;}
+.scan-card .ingredients{max-height:13rem;overflow:auto;}
+
 /* Motion: answers touch, plus one gentle ambient moment (the plate) */
 .stButton button,.stDownloadButton button,[class*="st-key-card_"],.info,
 [data-testid="stSidebar"] [role="radiogroup"] label{
@@ -376,6 +393,7 @@ PAGE_THEME = {
     "My Profile": ("profile", "#C45C8A"),
     "AI Assistant": ("ask", "#2E8B57"),
     "Food Scanner": ("scan", "#F4A93B"),
+    "Barcode Scanner": ("barcode", "#E07A3F"),
     "Nutrition Centre": ("nutri", "#2A9D8F"),
     "Fitness Planner": ("fit", "#4A7FB5"),
     "Allergy Centre": ("allergy", "#D9534F"),
@@ -744,7 +762,7 @@ st.sidebar.markdown(
     '<div class="brand-sub">Food, nutrition and movement</div></div></div>',
     unsafe_allow_html=True)
 
-pages = ["Home", "My Profile", "AI Assistant", "Food Scanner", "Nutrition Centre",
+pages = ["Home", "My Profile", "AI Assistant", "Food Scanner", "Barcode Scanner", "Nutrition Centre",
          "Fitness Planner", "Allergy Centre", "Saved Information", "About and Privacy"]
 page = st.sidebar.radio("Menu", pages, key="page", label_visibility="collapsed")
 user = st.session_state.get("user")
@@ -763,6 +781,305 @@ st.sidebar.markdown(
     '<div class="side-note">AI-generated guidance for learning. It is not medical advice.</div>',
     unsafe_allow_html=True)
 st.sidebar.caption("Version 1.0")
+
+# ---------- Barcode and packaged food ----------
+OFF_FIELDS = ("code,product_name,generic_name,brands,quantity,serving_size,image_front_url,ingredients_text,"
+              "nutriments,allergens_tags,traces_tags,nutriscore_grade,nova_group,labels,countries,additives_n,categories")
+OFF_ALLERGENS = {
+    "Peanuts": ["en:peanuts"], "Tree nuts": ["en:nuts"], "Milk": ["en:milk"], "Eggs": ["en:eggs"],
+    "Fish": ["en:fish"], "Shellfish": ["en:crustaceans", "en:molluscs"], "Wheat": ["en:gluten"],
+    "Soy": ["en:soybeans"], "Sesame": ["en:sesame-seeds"],
+}
+NOVA = {1: "Unprocessed or minimally processed", 2: "Processed culinary ingredient",
+        3: "Processed food", 4: "Ultra-processed food"}
+GRADE_COLORS = {"A": "#2E8B57", "B": "#7CB342", "C": "#F4C430", "D": "#EF8A17", "E": "#D9534F"}
+BARCODE_MESSAGES = {
+    "unreadable": "I couldn't read a barcode from that photo. Try again in good light with the bars filling "
+                  "most of the frame, or type the number printed under the bars.",
+    "invalid": "That doesn't look like a valid barcode number. Check the digits printed under the bars.",
+    "not_found": "This product isn't in the Open Food Facts database yet. You can scan its ingredients "
+                 "label with the Food Scanner instead.",
+    "network": "I couldn't reach the product database just now. Please try again in a moment.",
+}
+
+
+def valid_gtin(code):
+    """True if code is a barcode number (EAN-8, UPC-A, EAN-13 or GTIN-14) with a correct check digit."""
+    if not code.isdigit() or len(code) not in (8, 12, 13, 14):
+        return False
+    digits = [int(c) for c in code]
+    check = digits.pop()
+    total = sum(d * (3 if i % 2 == 0 else 1) for i, d in enumerate(reversed(digits)))
+    return (10 - total % 10) % 10 == check
+
+
+def to_lookup_code(text):
+    """Clean up a barcode number for lookup. Returns None if it isn't valid."""
+    code = re.sub(r"\D", "", text or "")
+    if not valid_gtin(code):
+        return None
+    if len(code) == 12:
+        return "0" + code
+    if len(code) == 14 and code.startswith("0"):
+        return code[1:]
+    return code
+
+
+def _strings(x):
+    if isinstance(x, str):
+        yield x
+    elif isinstance(x, (list, tuple)):
+        for item in x:
+            yield from _strings(item)
+
+
+def decode_barcode(photo):
+    """Read a barcode from a photo with OpenCV. Returns a lookup code or None."""
+    import cv2
+    import numpy as np
+    from io import BytesIO
+    from PIL import Image, ImageOps
+    img = ImageOps.exif_transpose(Image.open(BytesIO(photo.getvalue()))).convert("RGB")
+    img.thumbnail((1600, 1600))
+    gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
+    detector = cv2.barcode.BarcodeDetector() if hasattr(cv2, "barcode") else cv2.barcode_BarcodeDetector()
+    # The detector is picky about how big the bars are in the frame, so try several sizes,
+    # with and without a white border, and the photo turned on its side.
+    for base in (gray, cv2.rotate(gray, cv2.ROTATE_90_CLOCKWISE)):
+        for border in (1.0, 0):
+            for factor in (1.0, 0.8, 0.65, 0.5, 0.4, 0.3, 0.22, 0.15):
+                view = base if factor == 1.0 else cv2.resize(base, None, fx=factor, fy=factor,
+                                                             interpolation=cv2.INTER_AREA)
+                if border:
+                    m = int(max(view.shape) * border)
+                    view = cv2.copyMakeBorder(view, m, m, m, m, cv2.BORDER_CONSTANT, value=255)
+                try:
+                    found = detector.detectAndDecode(view)
+                except Exception:
+                    continue
+                for text in _strings(found):
+                    code = to_lookup_code(text)
+                    if code:
+                        return code
+    return None
+
+
+def read_digits_with_ai(photo):
+    """Fallback: ask the vision model to read the number printed under the bars."""
+    encoded = base64.b64encode(prepare_image(photo, 1600)).decode("utf-8")
+    response = groq_client.chat.completions.create(
+        model=FOOD_VISION_MODEL,
+        messages=[{"role": "user", "content": [
+            {"type": "text", "text": "Read the number printed under the barcode in this photo. Reply with "
+                                     "only the digits, or NONE if you cannot read them clearly."},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}]}],
+        temperature=0, max_tokens=30)
+    return to_lookup_code(response.choices[0].message.content or "")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_product(code):
+    """Look a product up in Open Food Facts. Returns its data, or None if it isn't listed."""
+    url = f"https://world.openfoodfacts.org/api/v2/product/{code}.json?fields={OFF_FIELDS}"
+    request = urllib.request.Request(url, headers={"User-Agent": "NutriFitAI/1.0 (student project)"})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    return data.get("product") if data.get("status") == 1 else None
+
+
+def normalise_product(p, code):
+    nut = p.get("nutriments") or {}
+
+    def g(key):
+        try:
+            return float(nut[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    kcal = g("energy-kcal_100g")
+    if kcal is None and g("energy_100g") is not None:
+        kcal = g("energy_100g") / 4.184          # the database also stores kilojoules
+    image = str(p.get("image_front_url") or "")
+    if not image.startswith(("https://images.openfoodfacts.org/", "https://static.openfoodfacts.org/")):
+        image = ""
+    grade = _txt(p.get("nutriscore_grade"), 1).upper()
+    try:
+        nova = int(p.get("nova_group"))
+    except (TypeError, ValueError):
+        nova = None
+    tags = lambda key: [t for t in (p.get(key) or []) if isinstance(t, str)][:15]
+    label = lambda tag: tag.split(":")[-1].replace("-", " ")
+    return {
+        "code": code,
+        "name": _txt(p.get("product_name") or p.get("generic_name"), 90) or "Unnamed product",
+        "brand": _txt(p.get("brands"), 60), "quantity": _txt(p.get("quantity"), 30),
+        "serving": _txt(p.get("serving_size"), 30), "image": image,
+        "ingredients": _txt(p.get("ingredients_text"), 1500),
+        "per100": {"kcal": kcal, "protein": g("proteins_100g"), "carbs": g("carbohydrates_100g"),
+                   "fat": g("fat_100g"), "sat_fat": g("saturated-fat_100g"), "sugar": g("sugars_100g"),
+                   "fibre": g("fiber_100g"), "salt": g("salt_100g")},
+        "kcal_serving": g("energy-kcal_serving"),
+        "allergen_tags": tags("allergens_tags"), "trace_tags": tags("traces_tags"),
+        "allergens": [label(t) for t in tags("allergens_tags")],
+        "traces": [label(t) for t in tags("traces_tags")],
+        "nutriscore": grade if grade in GRADE_COLORS else "",
+        "nova": nova if nova in NOVA else None,
+        "additives": p.get("additives_n") if isinstance(p.get("additives_n"), int) else None,
+        "labels": _txt(p.get("labels"), 140), "countries": _txt(p.get("countries"), 100),
+    }
+
+
+def _fmt(v, unit="g"):
+    return f"{round(v, 1):g} {unit}" if v is not None else "n/a"
+
+
+def product_summary_html(d):
+    esc = html.escape
+    per = d["per100"]
+    img = f'<img src="{esc(d["image"])}" alt="">' if d["image"] else ""
+    sub = ", ".join(x for x in (d["brand"], d["quantity"]) if x)
+    head = f'<div class="prod">{img}<div><h3>{esc(d["name"])}</h3><p>{esc(sub)}</p></div></div>'
+    if per["kcal"] is not None:
+        extra = (f", {round(d['kcal_serving'])} kcal per serving ({esc(d['serving'])})"
+                 if d["kcal_serving"] is not None and d["serving"] else "")
+        kcal = f'<div class="kcal"><b>{round(per["kcal"])}</b><span>kcal per 100 g{extra}</span></div>'
+    else:
+        kcal = '<div class="kcal"><span>Calories are not listed for this product.</span></div>'
+    macro = [per["protein"], per["carbs"], per["fat"]]
+    pct = [None, None, None]
+    if None not in macro:
+        parts = [4 * macro[0], 4 * macro[1], 9 * macro[2]]
+        total = sum(parts) or 1
+        pct = [round(100 * x / total) for x in parts]
+    cards = "".join(
+        f'<div class="macro"><span><u style="background:{col}"></u>{name}</span><b>{_fmt(v)}</b>'
+        f'<i>{f"{pc}% of calories" if pc is not None else "per 100 g"}</i></div>'
+        for name, v, pc, col in zip(("Protein", "Carbs", "Fats"), macro, pct, MACRO_COLORS))
+    bar = ("".join(f'<i style="width:{pc}%;background:{col}"></i>' for pc, col in zip(pct, MACRO_COLORS))
+           if None not in pct else "")
+    scores = ""
+    if d["nutriscore"]:
+        color = GRADE_COLORS[d["nutriscore"]]
+        ink = "#14332A" if d["nutriscore"] == "C" else "#fff"
+        scores += (f'<div class="score"><i class="grade" style="background:{color};color:{ink}">'
+                   f'{d["nutriscore"]}</i><span><b>Nutri-Score</b>A is best, E is lowest</span></div>')
+    if d["nova"]:
+        scores += (f'<div class="score"><i class="grade" style="background:#14332A;color:#fff">{d["nova"]}</i>'
+                   f'<span><b>NOVA group</b>{esc(NOVA[d["nova"]])}</span></div>')
+    return (head + kcal + f'<div class="macros">{cards}</div>' + (f'<div class="split">{bar}</div>' if bar else "")
+            + (f'<div class="score-row">{scores}</div>' if scores else ""))
+
+
+def product_detail_html(d):
+    esc = html.escape
+    per = d["per100"]
+
+    def card(title, body):
+        return f'<div class="scan-card"><h4>{title}</h4>{body}</div>'
+
+    def tags(items, cls=""):
+        return '<div class="tagrow">' + "".join(f'<span class="tag {cls}">{esc(x)}</span>' for x in items) + "</div>"
+
+    rows = [("Saturated fat", per["sat_fat"]), ("Sugars", per["sugar"]), ("Fibre", per["fibre"]), ("Salt", per["salt"])]
+    nutrition = "".join(f'<div class="row"><span>{label}</span><b>{_fmt(v)}</b></div>'
+                        for label, v in rows if v is not None) or "<p>Not available.</p>"
+    ingredients = (f'<p class="ingredients">{esc(d["ingredients"])}</p>' if d["ingredients"]
+                   else "<p>Not listed in the database.</p>")
+    allergens = (("<p><b>Contains</b></p>" + tags(d["allergens"], "warn")) if d["allergens"] else "<p>No allergens listed.</p>")
+    if d["traces"]:
+        allergens += "<p><b>May contain traces of</b></p>" + tags(d["traces"])
+    origin = "".join(f'<div class="row"><span>{k}</span><b>{esc(v)}</b></div>'
+                     for k, v in (("Labels", d["labels"]), ("Sold in", d["countries"]), ("Barcode", d["code"])) if v)
+    processing = ((f'<div class="row"><span>Additives</span><b>{d["additives"]}</b></div>' if d["additives"] is not None else "")
+                  + (f'<p>{esc(NOVA[d["nova"]])}.</p>' if d["nova"] else ""))
+    about = ("<p>Product data comes from Open Food Facts, a community-built database. It can be incomplete "
+             "or out of date, so check the pack. Values are per 100 g unless shown otherwise.</p>")
+    return ('<div class="scan-grid">' + card("Nutrition per 100 g", nutrition) + card("Ingredients", ingredients)
+            + card("Allergens", allergens) + '</div><div class="scan-grid">' + card("Labels and origin", origin)
+            + card("Additives and processing", processing) + card("About this data", about) + "</div>")
+
+
+def product_markdown(d, dates=None):
+    per = d["per100"]
+    lines = [f"**{d['name']}**" + (f" ({d['brand']})" if d["brand"] else ""), "",
+             f"Per 100 g: {_fmt(per['kcal'], 'kcal')}, protein {_fmt(per['protein'])}, "
+             f"carbs {_fmt(per['carbs'])}, fat {_fmt(per['fat'])}."]
+    if d["ingredients"]:
+        lines += ["", "**Ingredients:** " + d["ingredients"]]
+    if d["allergens"]:
+        lines += ["", "**Contains:** " + ", ".join(d["allergens"])]
+    for label, key in (("Use by / best before", "expiry"), ("Made on", "made")):
+        if dates and dates.get(key):
+            lines += ["", f"**{label}:** {dates[key]}"]
+    return "\n".join(lines)
+
+
+def product_allergy_check(d):
+    """Compare a product with the allergies on the user's profile."""
+    allergies = pref("allergies")
+    if not allergies:
+        return
+    contains, traces = [], []
+    for a in allergies:
+        wanted = OFF_ALLERGENS.get(a, [])
+        words = [w for w in ALLERGEN_WORDS.get(a, []) if re.search(rf"\b{re.escape(w)}s?\b", d["ingredients"].lower())]
+        if any(t in d["allergen_tags"] for t in wanted) or words:
+            contains.append(a)
+        elif any(t in d["trace_tags"] for t in wanted):
+            traces.append(a)
+    if contains:
+        st.error("**This product lists your allergens:** " + ", ".join(contains) + ". Do not eat it if it is not safe for you.")
+    elif traces:
+        st.warning("**May contain traces of:** " + ", ".join(traces) + ". Check the pack carefully.")
+    else:
+        st.info("None of your listed allergens appear in this product's data, but the data can be incomplete. "
+                "Always check the pack.")
+
+
+# ---------- Dates on the pack ----------
+def parse_date(text):
+    """YYYY-MM-DD, or YYYY-MM (treated as the last day of that month). Returns a date or None."""
+    m = re.fullmatch(r"(\d{4})-(\d{2})(?:-(\d{2}))?", str(text or "").strip())
+    if not m:
+        return None
+    year, month = int(m.group(1)), int(m.group(2))
+    try:
+        if m.group(3):
+            return date(year, month, int(m.group(3)))
+        return date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1)
+    except ValueError:
+        return None
+
+
+def date_status(expiry, today):
+    days = (expiry - today).days
+    if days < 0:
+        return "expired", f"Expired {abs(days)} day{'s' if abs(days) != 1 else ''} ago"
+    if days == 0:
+        return "today", "Expires today"
+    if days <= 3:
+        return "soon", f"Expires in {days} day{'s' if days != 1 else ''}"
+    return "ok", f"{days} days left"
+
+
+def read_dates_with_ai(photo):
+    """Ask the vision model to read printed dates. Returns a dict (or None)."""
+    encoded = base64.b64encode(prepare_image(photo, 1600)).decode("utf-8")
+    response = groq_client.chat.completions.create(
+        model=FOOD_VISION_MODEL,
+        messages=[
+            {"role": "system", "content": (
+                "You read printed dates on food packaging. Reply with ONE JSON object only, no other text: "
+                '{"use_by": null, "best_before": null, "manufactured": null, "batch": null, "text_seen": ""}. '
+                "Give dates as YYYY-MM-DD, or YYYY-MM if no day is printed. Two-digit years mean 20xx. If the "
+                "order of day and month is unclear, use null and put the printed text in text_seen. "
+                "text_seen is the exact date text you can read. Never guess.")},
+            {"role": "user", "content": [
+                {"type": "text", "text": "Read the dates on this pack."},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}]}],
+        temperature=0, max_tokens=300)
+    return parse_scan(response.choices[0].message.content)
+
 
 # ---------- Home content ----------
 TIPS = [
@@ -784,6 +1101,7 @@ ICONS = {
     "nutri": '<svg viewBox="0 0 24 24"><path d="M5 19C5 9 11 4 20 4c0 9-5 15-15 15z"/><path d="M5 19l9-9"/></svg>',
     "allergy": '<svg viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.4"/></svg>',
     "saved": '<svg viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4z"/></svg>',
+    "barcode": '<svg viewBox="0 0 24 24"><path d="M4 5v14M7 5v14M11 5v14M14 5v14M17 5v14M20 5v14"/></svg>',
     "profile": '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c1-4 4-6 8-6s7 2 8 6"/></svg>',
     "about": '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.4"/></svg>',
 }
@@ -842,15 +1160,17 @@ if page == "Home":
 
     tiles = [
         ("Food Scanner", "Photograph a meal or drink and see what it likely contains.", "Scan food", "scan"),
+        ("Barcode Scanner", "Scan packaged food for nutrition, ingredients, allergens and dates.", "Scan a barcode", "barcode"),
         ("AI Assistant", "Get clear answers about food, nutrition and healthy habits.", "Ask a question", "ask"),
         ("Fitness Planner", "Build a weekly activity plan around your goal and schedule.", "Plan my week", "fit"),
         ("Nutrition Centre", "Learn what proteins, vitamins, fibre and more do for you.", "Browse nutrients", "nutri"),
         ("Allergy Centre", "See the common food allergens and where they often hide.", "View allergens", "allergy"),
-        ("Saved Information", "Review your chats and fitness plans from this session.", "Open saved items", "saved"),
+        ("Saved Information", "Review your saved chats, scans, products and plans.", "Open saved items", "saved"),
+        ("My Profile", "Set your age group, goals and allergies once for every page.", "Edit my profile", "profile"),
     ]
-    for r in range(0, len(tiles), 3):
-        cols = st.columns(3, gap="medium")
-        for col, (name, text, btn, key) in zip(cols, tiles[r:r + 3]):
+    for r in range(0, len(tiles), 4):
+        cols = st.columns(4, gap="medium")
+        for col, (name, text, btn, key) in zip(cols, tiles[r:r + 4]):
             with col:
                 with st.container(key=f"card_{key}"):
                     st.markdown(f'<div class="icon">{ICONS[key]}</div><h3>{name}</h3><p>{text}</p>',
@@ -1027,6 +1347,136 @@ elif page == "Food Scanner":
                    "Actual values depend on ingredients and portion size.")
         if go:
             if save("scan", d["title"], scan_markdown(d), d):
+                st.toast("Saved to your history")
+            else:
+                hint_signin()
+
+# ---------- Barcode Scanner ----------
+elif page == "Barcode Scanner":
+    header("Barcode Scanner", "Scan a packaged food's barcode to see its nutrition, ingredients and allergens.")
+    st.markdown('<div class="steps"><span><b>1</b>Scan or type the barcode</span>'
+                '<span><b>2</b>Review the product</span><span><b>3</b>Check the dates</span></div>',
+                unsafe_allow_html=True)
+    st.caption("Hold the barcode flat and steady in good light, with the bars filling most of the frame.")
+
+    mode = st.segmented_control(
+        "How do you want to enter the barcode?", ["Take a photo", "Upload a photo", "Type the number"],
+        default="Upload a photo", label_visibility="collapsed", key="bc_mode") or "Upload a photo"
+
+    left, right = st.columns([1, 1.25], gap="large")
+    photo, typed = None, ""
+    with left, st.container(key="panel_bc_in"):
+        if mode == "Take a photo":
+            photo = st.camera_input("Take a picture of the barcode", key="bc_cam")
+        elif mode == "Upload a photo":
+            photo = st.file_uploader("Upload a photo of the barcode", type=["png", "jpg", "jpeg"], key="bc_up")
+            if photo:
+                st.image(photo, use_container_width=True)
+        else:
+            typed = st.text_input("Barcode number", max_chars=14, placeholder="e.g. 5449000000996",
+                                  help="The digits printed under the bars.")
+        go = st.button("Look up product") if (photo or typed.strip()) else False
+
+    if go:
+        with right:
+            with st.spinner("Looking up the product..."):
+                result = {"code": None, "product": None, "error": None}
+                try:
+                    if mode == "Type the number":
+                        result["code"] = to_lookup_code(typed)
+                        result["error"] = None if result["code"] else "invalid"
+                    else:
+                        result["code"] = decode_barcode(photo)
+                        if not result["code"] and limit_ok():
+                            result["code"] = read_digits_with_ai(photo)
+                        result["error"] = None if result["code"] else "unreadable"
+                    if result["code"]:
+                        raw = fetch_product(result["code"])
+                        if raw:
+                            result["product"] = normalise_product(raw, result["code"])
+                        else:
+                            result["error"] = "not_found"
+                except Exception:
+                    result["error"] = "network"
+        st.session_state.barcode = result
+        if result["product"]:      # start the date checker fresh for a new product
+            for k in ("exp_date", "made_date", "date_note"):
+                st.session_state[k] = None
+
+    result = st.session_state.get("barcode")
+    with right:
+        if not result:
+            st.info("Scan or type a barcode to get started.")
+        elif result.get("product"):
+            st.markdown(product_summary_html(result["product"]), unsafe_allow_html=True)
+            product_allergy_check(result["product"])
+        else:
+            st.warning(BARCODE_MESSAGES.get(result.get("error"), BARCODE_MESSAGES["network"]))
+
+    if result and result.get("product"):
+        d = result["product"]
+        st.markdown(product_detail_html(d), unsafe_allow_html=True)
+
+        section("Check the dates")
+        st.caption("A barcode doesn't contain the expiry or manufacturing date. Those are printed on each "
+                   "pack and differ between batches, so add them from the pack.")
+        st.session_state.setdefault("exp_kind", "Best before")
+        with st.expander("Read the dates from a photo of the pack"):
+            if mode == "Take a photo":
+                date_photo = st.camera_input("Photo of the date on the pack", key="date_cam")
+            else:
+                date_photo = st.file_uploader("Photo of the date on the pack", type=["png", "jpg", "jpeg"],
+                                              key="date_up")
+            if date_photo and st.button("Read the dates") and limit_ok():
+                try:
+                    with st.spinner("Reading the dates..."):
+                        found = read_dates_with_ai(date_photo) or {}
+                    use_by, best, made_on = (parse_date(found.get(k)) for k in ("use_by", "best_before", "manufactured"))
+                    seen = _txt(found.get("text_seen"), 120)
+                    if use_by or best or made_on:
+                        st.session_state.exp_kind = "Use by" if use_by else "Best before"
+                        st.session_state.exp_date = use_by or best
+                        st.session_state.made_date = made_on
+                        st.session_state.date_note = seen
+                    else:
+                        st.warning("I couldn't read a clear date" + (f" (I could see: {seen})" if seen else "")
+                                   + ". Try a closer photo, or enter it below.")
+                except Exception as e:
+                    st.error(f"Couldn't read the dates: {friendly(e)}.")
+
+        c1, c2, c3 = st.columns(3, gap="medium")
+        kind = c1.radio("The expiry date on the pack is a", ["Use by", "Best before"], key="exp_kind")
+        expiry = c2.date_input("Expiry date", value=None, key="exp_date", format="YYYY-MM-DD",
+                               min_value=date(2000, 1, 1), max_value=date(2100, 12, 31))
+        made = c3.date_input("Manufacturing date (if shown)", value=None, key="made_date", format="YYYY-MM-DD",
+                             min_value=date(2000, 1, 1), max_value=date(2100, 12, 31))
+        if st.session_state.get("date_note"):
+            st.caption(f"Read from the photo: {st.session_state.date_note}. Please check it against the pack.")
+
+        today = date.today()
+        if expiry:
+            level, text = date_status(expiry, today)
+            if level == "expired":
+                st.error(text + (". Don't eat food that is past its use-by date." if kind == "Use by" else
+                                 ". It is past its best-before date, so quality may have dropped. Check it "
+                                 "carefully and throw it out if in doubt."))
+            elif level in ("today", "soon"):
+                st.warning(text + ".")
+            else:
+                st.success(text + ".")
+        if made:
+            age = (today - made).days
+            st.info(f"Made on {made:%d %b %Y} ({age} days ago)." if age >= 0
+                    else "The manufacturing date is in the future. Please check it.")
+        if expiry and made and expiry >= made:
+            st.caption(f"Shelf life from manufacture to expiry: {(expiry - made).days} days.")
+        st.caption("Use by is a safety date: don't eat food after it. Best before is a quality date: food is "
+                   "often still safe a little after it but may not be at its best. If in doubt, throw it out.")
+
+        if st.button("Save this product to my history"):
+            dates = {"kind": kind, "expiry": expiry.isoformat() if expiry else "",
+                     "made": made.isoformat() if made else ""}
+            if save("product", d["name"], product_markdown(d, dates), {**d, "dates": dates}):
                 st.toast("Saved to your history")
             else:
                 hint_signin()
@@ -1310,6 +1760,7 @@ elif page == "Saved Information":
     else:
         kinds = [("chat", "Chats", "No saved chats yet. Chat with the AI Assistant while signed in."),
                  ("scan", "Food scans", "No food scans yet. Analyse a photo in the Food Scanner."),
+                 ("product", "Products", "No saved products yet. Scan a barcode and save it."),
                  ("plan", "Fitness plans", "No plans yet. Build one in the Fitness Planner."),
                  ("allergy", "Dish checks", "No dish checks yet. Try Check a dish in the Allergy Centre.")]
         totals = db.counts(user["id"])
@@ -1331,6 +1782,15 @@ elif page == "Saved Information":
                             saved_scan = json.loads(it["meta"])
                             st.markdown(scan_summary_html(saved_scan) + scan_detail_html(saved_scan),
                                         unsafe_allow_html=True)
+                        elif kind == "product" and it["meta"]:
+                            saved_product = json.loads(it["meta"])
+                            st.markdown(product_summary_html(saved_product) + product_detail_html(saved_product),
+                                        unsafe_allow_html=True)
+                            saved_dates = saved_product.get("dates") or {}
+                            if saved_dates.get("expiry"):
+                                st.caption(f"{saved_dates.get('kind', 'Expiry')}: {saved_dates['expiry']}")
+                            if saved_dates.get("made"):
+                                st.caption(f"Made on: {saved_dates['made']}")
                         else:
                             st.markdown(it["body"])
                         c1, c2 = st.columns(2)
@@ -1388,6 +1848,7 @@ elif page == "About and Privacy":
         + about_card("#F4A93B", "scan", "Who sees what you send",
             "<p>To answer you, your messages, photos and profile details (such as allergies) are sent to an "
             "AI service (Groq), which writes the reply.</p>"
+            "<p>Barcode numbers you look up are sent to Open Food Facts, a free community database of food products.</p>"
             "<p>Please don't enter your full name, address or other personal details in chats.</p>")
         + about_card("#D9534F", "allergy", "Your choices",
             "<p>Open Saved Information, then Manage my data, to delete your saved items or your whole "
