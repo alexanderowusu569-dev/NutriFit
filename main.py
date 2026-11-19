@@ -305,6 +305,43 @@ h3{font-size:1.15rem!important;font-weight:700!important;}
 @media(max-width:800px){.how{grid-template-columns:1fr;}.st-key-hero{padding:1.6rem;}.st-key-hero h1{font-size:2rem;}
   .tip{flex-direction:column;align-items:flex-start;gap:.5rem;}}
 
+/* Page backdrop */
+.stApp{background-color:var(--bg);
+  background-image:radial-gradient(circle at 8% -5%,rgba(46,139,87,.14),transparent 38%),
+    radial-gradient(circle at 100% 12%,rgba(244,169,59,.16),transparent 34%),
+    radial-gradient(rgba(20,51,42,.07) 1px,transparent 1.2px);
+  background-size:auto,auto,24px 24px;background-attachment:fixed;}
+
+/* Page banner */
+.banner{position:relative;overflow:hidden;display:flex;align-items:center;gap:1.2rem;background:#fff;
+  background:linear-gradient(110deg,color-mix(in srgb,var(--c) 18%,white) 0%,#fff 75%);
+  border:1px solid var(--line);border-left:6px solid var(--c);border-radius:18px;
+  padding:1.4rem 1.7rem;margin-bottom:1.6rem;box-shadow:0 1px 2px rgba(20,51,42,.06);}
+.banner::after{content:"";position:absolute;right:-50px;top:-50px;width:190px;height:190px;border-radius:50%;background:var(--c);opacity:.1;}
+.banner::before{content:"";position:absolute;right:70px;bottom:-60px;width:110px;height:110px;border-radius:50%;background:var(--c);opacity:.08;}
+.banner .badge{flex:none;display:grid;place-items:center;width:56px;height:56px;border-radius:16px;background:var(--c);
+  box-shadow:0 6px 14px rgba(20,51,42,.18);}
+.banner .badge svg{width:28px;height:28px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.banner h1{margin:0;font-size:1.9rem;font-weight:800;letter-spacing:-.02em;}
+.banner p{margin:.25rem 0 0;color:var(--muted)!important;font-size:1.02rem;}
+@media(max-width:700px){.banner{padding:1.1rem;gap:.9rem;}.banner h1{font-size:1.5rem;}}
+
+/* Panels: tabs, forms, chat, section titles, about cards */
+.stTabs [data-baseweb="tab-list"]{background:#fff;border:1px solid var(--line);border-bottom:none;border-radius:16px 16px 0 0;padding:.35rem .6rem 0;}
+.stTabs [data-baseweb="tab-panel"]{background:#fff;border:1px solid var(--line);border-top:none;border-radius:0 0 16px 16px;padding:1.4rem 1.5rem 1.6rem;}
+.stTabs .info{background:var(--bg);}
+[data-testid="stForm"]{background:#fff;border:1px solid var(--line);border-radius:16px;padding:1.4rem 1.5rem;}
+[data-testid="stChatMessage"]:has([data-testid*="AvatarUser"]){background:var(--tint);}
+[data-testid="stChatInput"]{background:#fff;border:1px solid var(--line);border-radius:16px;}
+h2.section{display:flex;align-items:center;gap:.6rem;font-size:1.3rem;margin:1.8rem 0 .8rem;}
+h2.section::before{content:"";width:6px;height:1.15em;border-radius:4px;background:var(--brand);}
+.about{display:grid;grid-template-columns:repeat(2,1fr);gap:1rem;margin-bottom:1rem;}
+.about>div{background:#fff;border:1px solid var(--line);border-top:4px solid var(--c);border-radius:14px;padding:1.2rem 1.4rem;}
+.about h4{margin:0 0 .4rem;font-size:1.05rem!important;font-weight:700;}
+.about p,.about li{color:var(--muted)!important;margin:0 0 .3rem;}
+.about ul{margin:.2rem 0 0 1.1rem;padding:0;}
+@media(max-width:800px){.about{grid-template-columns:1fr;}}
+
 /* Motion: answers touch, plus one gentle ambient moment (the plate) */
 .stButton button,.stDownloadButton button,[class*="st-key-card_"],.info,
 [data-testid="stSidebar"] [role="radiogroup"] label{
@@ -335,8 +372,26 @@ h3{font-size:1.15rem!important;font-weight:700!important;}
 """, unsafe_allow_html=True)
 
 
+PAGE_THEME = {
+    "My Profile": ("profile", "#C45C8A"),
+    "AI Assistant": ("ask", "#2E8B57"),
+    "Food Scanner": ("scan", "#F4A93B"),
+    "Nutrition Centre": ("nutri", "#2A9D8F"),
+    "Fitness Planner": ("fit", "#4A7FB5"),
+    "Allergy Centre": ("allergy", "#D9534F"),
+    "Saved Information": ("saved", "#8E6BB0"),
+    "About and Privacy": ("about", "#5B6F66"),
+}
+
+
 def header(title, sub):
-    st.markdown(f'<div class="page-head"><h1>{title}</h1><p>{sub}</p></div>', unsafe_allow_html=True)
+    icon, color = PAGE_THEME.get(title, ("about", "#2E8B57"))
+    st.markdown(f'<div class="banner" style="--c:{color}"><div class="badge">{ICONS[icon]}</div>'
+                f'<div><h1>{title}</h1><p>{sub}</p></div></div>', unsafe_allow_html=True)
+
+
+def section(title):
+    st.markdown(f'<h2 class="section">{title}</h2>', unsafe_allow_html=True)
 
 
 def info(title, text):
@@ -729,6 +784,8 @@ ICONS = {
     "nutri": '<svg viewBox="0 0 24 24"><path d="M5 19C5 9 11 4 20 4c0 9-5 15-15 15z"/><path d="M5 19l9-9"/></svg>',
     "allergy": '<svg viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.4"/></svg>',
     "saved": '<svg viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4z"/></svg>',
+    "profile": '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c1-4 4-6 8-6s7 2 8 6"/></svg>',
+    "about": '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.4"/></svg>',
 }
 LEAF = ('<svg class="leaf {cls}" viewBox="0 0 24 24"><path d="M4 20C4 10 10 4 21 4c0 10-6 16-17 16z" fill="#4DB37C"/>'
         '<path d="M4 20L14 10" stroke="#14332A" stroke-width="1.2" fill="none" opacity=".35"/></svg>')
@@ -843,11 +900,13 @@ elif page == "My Profile":
         else:
             st.toast("Profile saved for this visit")
 
-    st.markdown("### Where your profile is used")
+    section("Where your profile is used")
     st.markdown(
-        "- **AI Assistant:** answers are tailored to you and avoid foods with your allergens.\n"
-        "- **Food Scanner:** scans get an allergy check and a warning if they mention your allergens.\n"
-        "- **Fitness Planner and Allergy Centre:** your age group, level and allergies are filled in for you.")
+        '<div class="how">'
+        "<div><h4>AI Assistant</h4><p>Answers are tailored to you and avoid foods with your allergens.</p></div>"
+        "<div><h4>Food Scanner</h4><p>Scans get an allergy check and a warning if they mention your allergens.</p></div>"
+        "<div><h4>Planner and Allergy Centre</h4><p>Your age group, level and allergies are filled in for you.</p></div>"
+        "</div>", unsafe_allow_html=True)
     st.caption("Allergies are health information. NutriFit only uses them to tailor this app, "
                "and signed-in profiles are stored only in your account.")
     if st.session_state.profile:
@@ -924,7 +983,7 @@ elif page == "Food Scanner":
         default="Upload a photo", label_visibility="collapsed") or "Upload a photo"
 
     left, right = st.columns([1, 1.25], gap="large")
-    with left:
+    with left, st.container(key="panel_scan_in"):
         if mode == "Take a photo":
             photo = st.camera_input("Take a picture of your food",
                                     help="Allow camera access when your browser asks.")
@@ -985,8 +1044,9 @@ elif page == "Nutrition Centre":
         "Fibre": ("Keeps digestion regular and helps you feel full.", "Whole grains, vegetables, fruit, legumes"),
         "Water": ("Regulates temperature and moves nutrients around the body.", "Water, fruit, soups, milk"),
     }
-    for tab, (does, sources) in zip(st.tabs(list(nutrients)), nutrients.values()):
+    for tab, (name, (does, sources)) in zip(st.tabs(list(nutrients)), nutrients.items()):
         with tab:
+            st.markdown(f"<h3>{name}</h3>", unsafe_allow_html=True)
             c1, c2 = st.columns(2, gap="medium")
             c1.markdown(info("What it does", does), unsafe_allow_html=True)
             c2.markdown(info("Where to find it", sources), unsafe_allow_html=True)
@@ -1065,7 +1125,7 @@ elif page == "Allergy Centre":
         c3.markdown(info("Good to know", a["tip"]), unsafe_allow_html=True)
 
     with labels_tab:
-        st.markdown("### Four habits that help")
+        section("Four habits that help")
         st.markdown(
             "- **Read every label, every time.** Recipes can change without warning.\n"
             "- **Check the whole ingredient list,** not only the Contains line, because labelling "
@@ -1073,7 +1133,7 @@ elif page == "Allergy Centre":
             "- **Take \"may contain\" seriously.** It means the food could pick up traces from "
             "shared equipment.\n"
             "- **Ask when eating out.** Staff can tell you what is in a dish and how it is prepared.")
-        st.markdown("### Other names to look for")
+        section("Other names to look for")
         rows = "\n".join(f"| {n} | {a['labels']} |" for n, a in allergens.items())
         st.markdown("| Allergen | Names on labels |\n|---|---|\n" + rows)
 
@@ -1126,7 +1186,7 @@ elif page == "Allergy Centre":
 
         result = st.session_state.get("allergy_check")
         if result:
-            st.markdown("### Results")
+            section("Results")
             st.markdown(result)
             st.caption("A general guide only, not a guarantee. If you have an allergy, "
                        "confirm with the label or the person who prepared the food.")
@@ -1217,8 +1277,7 @@ elif page == "Fitness Planner":
 
     plan = st.session_state.get("fitness_plan")
     if plan:
-        st.divider()
-        st.markdown("### Your weekly plan")
+        section("Your weekly plan")
         st.markdown(plan)
         try:
             pdf = plan_to_pdf(plan, st.session_state.get("fitness_profile", {}))
@@ -1312,25 +1371,26 @@ elif page == "Saved Information":
 elif page == "About and Privacy":
     header("About and Privacy", "What NutriFit AI is, what it stores and how to remove your data.")
 
-    st.markdown("### What NutriFit AI is")
-    st.markdown("NutriFit AI is a learning tool about food, nutrition and physical activity. "
-                "It uses AI to answer questions, estimate what is in a meal photo and suggest activity plans. "
-                "It is **not medical advice** and cannot diagnose allergies or health conditions. "
-                "Speak to a doctor, dietitian or other qualified professional about personal health concerns.")
+    def about_card(color, icon, title, body):
+        return f'<div style="--c:{color}"><div class="icon">{ICONS[icon]}</div><h4>{title}</h4>{body}</div>'
 
-    st.markdown("### What is stored")
-    st.markdown(
-        "- **Only if you create an account:** your nickname, a scrambled (hashed) copy of your PIN, "
-        "your profile, and the chats, food scans, plans and dish checks you save.\n"
-        "- **Photos are not stored.** Only the written results of a scan are kept.\n"
-        "- **Without an account,** nothing is kept after you close the page.")
-
-    st.markdown("### Who sees what you send")
-    st.markdown("To answer you, your messages, photos and profile details (such as allergies) are sent to an "
-                "AI service (Groq), which generates the reply. Please don't enter your full name, address "
-                "or other personal details in chats.")
-
-    st.markdown("### Your choices")
-    st.markdown("Open **Saved Information**, then **Manage my data**, to delete your saved items or your "
-                "whole account at any time. Deleting is permanent. PINs can't be reset, so keep yours safe.")
+    st.markdown('<div class="about">'
+        + about_card("#2E8B57", "nutri", "What NutriFit AI is",
+            "<p>A learning tool about food, nutrition and physical activity. It uses AI to answer questions, "
+            "estimate what is in a meal photo and suggest activity plans.</p>"
+            "<p><b>It is not medical advice</b> and cannot diagnose allergies or health conditions. Speak to a "
+            "doctor, dietitian or other qualified professional about personal health concerns.</p>")
+        + about_card("#4A7FB5", "saved", "What is stored",
+            "<ul><li>Only if you create an account: your nickname, a scrambled (hashed) copy of your PIN, "
+            "your profile, and the chats, scans, plans and dish checks you save.</li>"
+            "<li>Photos are not stored. Only the written results of a scan are kept.</li>"
+            "<li>Without an account, nothing is kept after you close the page.</li></ul>")
+        + about_card("#F4A93B", "scan", "Who sees what you send",
+            "<p>To answer you, your messages, photos and profile details (such as allergies) are sent to an "
+            "AI service (Groq), which writes the reply.</p>"
+            "<p>Please don't enter your full name, address or other personal details in chats.</p>")
+        + about_card("#D9534F", "allergy", "Your choices",
+            "<p>Open Saved Information, then Manage my data, to delete your saved items or your whole "
+            "account at any time. Deleting is permanent.</p><p>PINs can't be reset, so keep yours safe.</p>")
+        + "</div>", unsafe_allow_html=True)
     st.caption("If you are under 18, please ask a parent, guardian or teacher before creating an account.")
