@@ -2,4 +2,5 @@ streamlit>=1.40
 groq
 reportlab
 Pillow
+opencv-python-headless
 psycopg[binary]>=3.1
