@@ -36,6 +36,8 @@ if not get_secret("GROQ_API_KEY"):
 groq_client = Groq(api_key=get_secret("GROQ_API_KEY"))
 AI_MODEL = get_secret("AI_MODEL", "qwen/qwen3.8-27b")
 FOOD_VISION_MODEL = get_secret("VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+GEMINI_KEY = get_secret("GEMINI_API_KEY")
+GEMINI_MODEL = get_secret("GEMINI_MODEL", "gemini-flash-latest")
 
 # ---------- State ----------
 if "page" not in st.session_state:
@@ -429,8 +431,10 @@ _setup_db()
 def friendly(e):
     """A short, safe explanation for an AI error (the raw error stays out of the page)."""
     t = str(e).lower()
-    if "429" in t or "rate limit" in t:
+    if "429" in t or "rate limit" in t or "resource_exhausted" in t or "quota" in t:
         return "the AI service is busy right now, so please wait a minute and try again"
+    if "404" in t or "not_found" in t or "is not found" in t:
+        return "the AI model name isn't recognised, so please tell the app owner"
     if "401" in t or "api key" in t or "authentication" in t:
         return "the app's AI key isn't working, so please tell the app owner"
     return "something went wrong, so please try again"
@@ -553,28 +557,61 @@ SCAN_SCHEMA = """{
 MACRO_COLORS = ("#2E8B57", "#F4A93B", "#4A7FB5")
 
 
+@st.cache_resource
+def _gemini_client(key):
+    from google import genai
+    return genai.Client(api_key=key)
+
+
+def vision_ai(system, text, photo, max_tokens=1200, temperature=0.2, max_side=1280, json_mode=False):
+    """Ask a vision model about a photo: Google Gemini first when a key is set, Groq as the backup."""
+    image = prepare_image(photo, max_side)
+    st.session_state.gemini_error = ""
+    if GEMINI_KEY:
+        try:
+            from google.genai import types
+            config = types.GenerateContentConfig(
+                system_instruction=system or None, temperature=temperature,
+                response_mime_type="application/json" if json_mode else None)
+            reply = _gemini_client(GEMINI_KEY).models.generate_content(
+                model=GEMINI_MODEL, config=config,
+                contents=[types.Part.from_bytes(data=image, mime_type="image/jpeg"), text])
+            if reply.text:
+                st.session_state.vision_used = "Gemini"
+                return reply.text
+            raise ValueError("Gemini returned an empty reply")
+        except Exception as e:
+            print(f"Gemini error ({GEMINI_MODEL}): {e}", flush=True)     # visible in the app logs
+            st.session_state.gemini_error = friendly(e)
+    encoded = base64.b64encode(image).decode("utf-8")
+    messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": [
+        {"type": "text", "text": text},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}]}]
+    response = groq_client.chat.completions.create(
+        model=FOOD_VISION_MODEL, messages=messages, temperature=temperature, max_tokens=max_tokens)
+    st.session_state.vision_used = "Groq"
+    return response.choices[0].message.content
+
+
+def vision_note():
+    """A small line saying which AI read the last photo (and why the backup was used)."""
+    used, problem = st.session_state.get("vision_used"), st.session_state.get("gemini_error")
+    if used == "Gemini":
+        return "Analysed with Google Gemini."
+    if used == "Groq" and problem:
+        return f"Google Gemini wasn't available ({problem}), so the backup AI was used."
+    return ""
+
+
 def run_scan(photo):
     """Send the photo to the vision model and return its raw reply."""
-    encoded = base64.b64encode(prepare_image(photo)).decode("utf-8")
-    response = groq_client.chat.completions.create(
-        model=FOOD_VISION_MODEL,
-        messages=[
-            {"role": "system", "content": (
-                "You are NutriFit AI Food Scanner. Look at the photo and reply with ONE JSON object "
-                "only: no markdown and no text before or after it. Estimate for the portion visible, "
-                "use round numbers, and lower the confidence when unsure. Never claim certainty. "
-                "Never comment on bacteria, freshness or food safety. Never diagnose conditions or "
-                "recommend restrictive diets. If the photo does not show food or a drink, reply "
-                '{"is_food": false}. Use exactly this structure:\n' + SCAN_SCHEMA)},
-            {"role": "user", "content": [
-                {"type": "text", "text": "Analyse this photo." + scan_note()},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}},
-            ]},
-        ],
-        temperature=0.2,
-        max_tokens=1200,
-    )
-    return response.choices[0].message.content
+    system = ("You are NutriFit AI Food Scanner. Look at the photo and reply with ONE JSON object "
+              "only: no markdown and no text before or after it. Estimate for the portion visible, "
+              "use round numbers, and lower the confidence when unsure. Never claim certainty. "
+              "Never comment on bacteria, freshness or food safety. Never diagnose conditions or "
+              "recommend restrictive diets. If the photo does not show food or a drink, reply "
+              '{"is_food": false}. Use exactly this structure:\n' + SCAN_SCHEMA)
+    return vision_ai(system, "Analyse this photo." + scan_note(), photo, json_mode=True)
 
 
 def _num(v):
@@ -866,15 +903,9 @@ def decode_barcode(photo):
 
 def read_digits_with_ai(photo):
     """Fallback: ask the vision model to read the number printed under the bars."""
-    encoded = base64.b64encode(prepare_image(photo, 1600)).decode("utf-8")
-    response = groq_client.chat.completions.create(
-        model=FOOD_VISION_MODEL,
-        messages=[{"role": "user", "content": [
-            {"type": "text", "text": "Read the number printed under the barcode in this photo. Reply with "
-                                     "only the digits, or NONE if you cannot read them clearly."},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}]}],
-        temperature=0, max_tokens=30)
-    return to_lookup_code(response.choices[0].message.content or "")
+    return to_lookup_code(vision_ai(
+        "", "Read the number printed under the barcode in this photo. Reply with only the digits, "
+            "or NONE if you cannot read them clearly.", photo, max_tokens=30, temperature=0, max_side=1600))
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -1064,21 +1095,13 @@ def date_status(expiry, today):
 
 def read_dates_with_ai(photo):
     """Ask the vision model to read printed dates. Returns a dict (or None)."""
-    encoded = base64.b64encode(prepare_image(photo, 1600)).decode("utf-8")
-    response = groq_client.chat.completions.create(
-        model=FOOD_VISION_MODEL,
-        messages=[
-            {"role": "system", "content": (
-                "You read printed dates on food packaging. Reply with ONE JSON object only, no other text: "
-                '{"use_by": null, "best_before": null, "manufactured": null, "batch": null, "text_seen": ""}. '
-                "Give dates as YYYY-MM-DD, or YYYY-MM if no day is printed. Two-digit years mean 20xx. If the "
-                "order of day and month is unclear, use null and put the printed text in text_seen. "
-                "text_seen is the exact date text you can read. Never guess.")},
-            {"role": "user", "content": [
-                {"type": "text", "text": "Read the dates on this pack."},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}]}],
-        temperature=0, max_tokens=300)
-    return parse_scan(response.choices[0].message.content)
+    system = ("You read printed dates on food packaging. Reply with ONE JSON object only, no other text: "
+              '{"use_by": null, "best_before": null, "manufactured": null, "batch": null, "text_seen": ""}. '
+              "Give dates as YYYY-MM-DD, or YYYY-MM if no day is printed. Two-digit years mean 20xx. If the "
+              "order of day and month is unclear, use null and put the printed text in text_seen. "
+              "text_seen is the exact date text you can read. Never guess.")
+    return parse_scan(vision_ai(system, "Read the dates on this pack.", photo, max_tokens=300,
+                                temperature=0, max_side=1600, json_mode=True))
 
 
 # ---------- Home content ----------
@@ -1345,6 +1368,8 @@ elif page == "Food Scanner":
         st.markdown(scan_detail_html(d), unsafe_allow_html=True)
         st.caption("All values are estimates from a photo, not lab measurements. "
                    "Actual values depend on ingredients and portion size.")
+        if vision_note():
+            st.caption(vision_note())
         if go:
             if save("scan", d["title"], scan_markdown(d), d):
                 st.toast("Saved to your history")
@@ -1846,8 +1871,8 @@ elif page == "About and Privacy":
             "<li>Photos are not stored. Only the written results of a scan are kept.</li>"
             "<li>Without an account, nothing is kept after you close the page.</li></ul>")
         + about_card("#F4A93B", "scan", "Who sees what you send",
-            "<p>To answer you, your messages, photos and profile details (such as allergies) are sent to an "
-            "AI service (Groq), which writes the reply.</p>"
+            "<p>To answer you, your messages, photos and profile details (such as allergies) are sent to AI "
+            "services (Groq, and Google Gemini for photos when it is set up), which write the reply.</p>"
             "<p>Barcode numbers you look up are sent to Open Food Facts, a free community database of food products.</p>"
             "<p>Please don't enter your full name, address or other personal details in chats.</p>")
         + about_card("#D9534F", "allergy", "Your choices",
