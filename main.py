@@ -284,6 +284,13 @@ h3{font-size:1.15rem!important;font-weight:700!important;}
 .st-key-hero_scan button:hover{background:#F7BC62;border-color:#F7BC62;}
 .st-key-hero_ask button{background:transparent;border:1px solid rgba(245,246,239,.55);}
 .st-key-hero_ask button:hover{background:rgba(255,255,255,.12);border-color:#fff;}
+/* Hero buttons: slim, equal width, text centred */
+.st-key-hero_scan,.st-key-hero_ask,.st-key-hero_scan .stButton,.st-key-hero_ask .stButton{width:100%;}
+.st-key-hero_scan button,.st-key-hero_ask button{width:100%;min-height:44px;padding:.4rem 1rem;border-radius:10px;
+  display:flex;align-items:center;justify-content:center;text-align:center;box-shadow:none;}
+.st-key-hero_ask button{border-width:1px;}
+.st-key-hero button div,.st-key-hero button [data-testid="stMarkdownContainer"]{width:100%;display:flex;justify-content:center;align-items:center;}
+.st-key-hero button p{margin:0!important;max-width:none!important;font-size:.95rem;font-weight:600;line-height:1.2;text-align:center;}
 .hero-art{position:relative;max-width:290px;margin:0 auto;}
 .hero-art svg{display:block;width:100%;height:auto;}
 .hero-art .leaf{position:absolute;animation:float 7s ease-in-out infinite;}
