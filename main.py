@@ -9,6 +9,7 @@ import base64
 import hashlib
 import os
 import time
+from datetime import date
 import streamlit as st
 from groq import Groq
 
@@ -203,7 +204,6 @@ h3{font-size:1.15rem!important;font-weight:700!important;}
 [class*="st-key-card_"]>div:last-child{margin-top:auto;}
 [class*="st-key-card_"] h3{margin:0 0 .35rem;}
 [class*="st-key-card_"] p{color:var(--muted)!important;margin:0 0 .6rem;}
-.st-key-card_scan{border-left:5px solid var(--accent);}
 .info,.fact{background:#fff;border:1px solid var(--line);border-radius:14px;padding:1.1rem 1.3rem;height:100%;}
 .fact{margin-top:1rem;}
 .info h4{margin:0 0 .3rem;font-size:1rem!important;font-weight:700;}
@@ -266,6 +266,45 @@ h3{font-size:1.15rem!important;font-weight:700!important;}
 .scan-card .bar i{display:block;height:100%;background:var(--brand);}
 .scan-card p,.muted-note{margin:0;color:var(--muted)!important;font-size:.92rem;}
 
+/* Home */
+.st-key-hero{position:relative;overflow:hidden;background:linear-gradient(135deg,#14332A 0%,#1B4A3A 55%,#256F46 100%);
+  border-radius:24px;padding:2.4rem 2.8rem;margin-bottom:1.4rem;}
+.st-key-hero::before{content:"";position:absolute;right:-90px;top:-90px;width:340px;height:340px;border-radius:50%;
+  background:radial-gradient(circle,rgba(244,169,59,.3),transparent 70%);pointer-events:none;}
+.st-key-hero h1{color:#F5F6EF!important;font-size:2.7rem;font-weight:800;line-height:1.08;margin:0 0 .8rem;}
+.st-key-hero p{color:#CFE3D8!important;font-size:1.08rem;max-width:42ch;margin:0 0 1.3rem;}
+.st-key-hero_scan button{background:var(--accent);border-color:var(--accent);}
+.st-key-hero_scan button p{color:var(--ink)!important;}
+.st-key-hero_scan button:hover{background:#F7BC62;border-color:#F7BC62;}
+.st-key-hero_ask button{background:transparent;border:1px solid rgba(245,246,239,.55);}
+.st-key-hero_ask button:hover{background:rgba(255,255,255,.12);border-color:#fff;}
+.hero-art{position:relative;max-width:290px;margin:0 auto;}
+.hero-art svg{display:block;width:100%;height:auto;}
+.hero-art .leaf{position:absolute;animation:float 7s ease-in-out infinite;}
+.hero-art .l1{width:36px;top:2%;left:0;}
+.hero-art .l2{width:26px;top:12%;right:-2%;animation-delay:-2.5s;}
+.hero-art .l3{width:22px;bottom:8%;left:6%;animation-delay:-4.5s;}
+.tip{display:flex;align-items:center;gap:1rem;background:#fff;border:1px solid var(--line);
+  border-left:5px solid var(--accent);border-radius:14px;padding:.9rem 1.2rem;margin-bottom:1.4rem;}
+.tip span{flex:none;background:var(--accent);color:var(--ink)!important;font-weight:700;font-size:.74rem;
+  letter-spacing:.05em;text-transform:uppercase;padding:.25rem .65rem;border-radius:99px;}
+.tip p{margin:0;}
+.st-key-card_scan{--c:#F4A93B;}.st-key-card_ask{--c:#2E8B57;}.st-key-card_fit{--c:#4A7FB5;}
+.st-key-card_nutri{--c:#2A9D8F;}.st-key-card_allergy{--c:#D9534F;}.st-key-card_saved{--c:#8E6BB0;}
+[class*="st-key-card_"]{border-top:4px solid var(--c,var(--brand));}
+.icon{display:grid;place-items:center;width:46px;height:46px;border-radius:12px;margin-bottom:.8rem;
+  background:#EEF3EA;background:color-mix(in srgb,var(--c) 15%,white);}
+.icon svg{width:24px;height:24px;stroke:var(--c);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.how{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin:.4rem 0 1rem;}
+.how>div{background:var(--tint);border-radius:14px;padding:1.1rem 1.2rem;}
+.how b{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--ink);
+  color:#fff!important;font-size:.85rem;margin-bottom:.5rem;}
+.how h4{margin:0 0 .25rem;font-size:1rem!important;font-weight:700;}
+.how p{margin:0;color:var(--muted)!important;font-size:.92rem;}
+.home-foot{text-align:center;color:var(--muted)!important;font-size:.88rem;margin-top:2rem;}
+@media(max-width:800px){.how{grid-template-columns:1fr;}.st-key-hero{padding:1.6rem;}.st-key-hero h1{font-size:2rem;}
+  .tip{flex-direction:column;align-items:flex-start;gap:.5rem;}}
+
 /* Motion: answers touch, plus one gentle ambient moment (the plate) */
 .stButton button,.stDownloadButton button,[class*="st-key-card_"],.info,
 [data-testid="stSidebar"] [role="radiogroup"] label{
@@ -280,7 +319,7 @@ h3{font-size:1.15rem!important;font-weight:700!important;}
 .plate{animation:float 6s ease-in-out infinite;}
 [data-testid="stChatMessage"],[data-testid="stMarkdownContainer"] table{animation:rise .35s ease both;}
 @media (prefers-reduced-motion:reduce){
-  .plate,[data-testid="stChatMessage"],[data-testid="stMarkdownContainer"] table{animation:none!important;}
+  .plate,.hero-art .leaf,[data-testid="stChatMessage"],[data-testid="stMarkdownContainer"] table{animation:none!important;}
   .stButton button,.stDownloadButton button,[class*="st-key-card_"],.info,
   [data-testid="stSidebar"] [role="radiogroup"] label{transition:none!important;transform:none!important;}}
 
@@ -670,13 +709,72 @@ st.sidebar.markdown(
     unsafe_allow_html=True)
 st.sidebar.caption("Version 1.0")
 
+# ---------- Home content ----------
+TIPS = [
+    "Aim to fill about half your plate with vegetables and fruit at most meals.",
+    "Sip water through the day. It helps you stay focused and energised.",
+    "Beans, eggs, fish and groundnuts are all good sources of protein.",
+    "A short walk after a meal is an easy way to add movement to your day.",
+    "A colourful plate usually means a wider mix of vitamins and minerals.",
+    "Whole grains like oats and brown rice help you feel full for longer.",
+    "On food labels, ingredients are listed from the largest amount to the smallest.",
+    "Warm up for five minutes before exercise and stretch gently afterwards.",
+    "Good sleep helps your mood, your appetite and how well you recover.",
+    "Try one new fruit or vegetable this week.",
+]
+ICONS = {
+    "scan": '<svg viewBox="0 0 24 24"><path d="M4 8h3l1.5-2.5h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.2"/></svg>',
+    "ask": '<svg viewBox="0 0 24 24"><path d="M4 5h16v11H10l-4 3.5V16H4z"/></svg>',
+    "fit": '<svg viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 4 12 2.5-6H21"/></svg>',
+    "nutri": '<svg viewBox="0 0 24 24"><path d="M5 19C5 9 11 4 20 4c0 9-5 15-15 15z"/><path d="M5 19l9-9"/></svg>',
+    "allergy": '<svg viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.4"/></svg>',
+    "saved": '<svg viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4z"/></svg>',
+}
+LEAF = ('<svg class="leaf {cls}" viewBox="0 0 24 24"><path d="M4 20C4 10 10 4 21 4c0 10-6 16-17 16z" fill="#4DB37C"/>'
+        '<path d="M4 20L14 10" stroke="#14332A" stroke-width="1.2" fill="none" opacity=".35"/></svg>')
+HERO_ART = (
+    '<div class="hero-art" aria-hidden="true">'
+    '<svg viewBox="0 0 260 260"><ellipse cx="130" cy="238" rx="86" ry="9" fill="#000" opacity=".2"/>'
+    '<circle cx="130" cy="126" r="112" fill="#F5F6EF"/>'
+    '<circle cx="130" cy="126" r="88" fill="#fff" stroke="#E4EADB" stroke-width="3"/>'
+    '<ellipse cx="92" cy="156" rx="34" ry="26" fill="#F3E7BF"/>'
+    '<g fill="#fff" opacity=".8"><ellipse cx="80" cy="150" rx="5" ry="2.2" transform="rotate(-25 80 150)"/>'
+    '<ellipse cx="98" cy="146" rx="5" ry="2.2" transform="rotate(15 98 146)"/>'
+    '<ellipse cx="90" cy="162" rx="5" ry="2.2"/><ellipse cx="108" cy="160" rx="5" ry="2.2" transform="rotate(-15 108 160)"/></g>'
+    '<g fill="#2E8B57"><circle cx="98" cy="86" r="22"/><circle cx="124" cy="76" r="19"/>'
+    '<circle cx="78" cy="102" r="16"/><circle cx="120" cy="98" r="17"/></g>'
+    '<g fill="#256F46"><circle cx="92" cy="80" r="6"/><circle cx="128" cy="72" r="5"/><circle cx="116" cy="102" r="5"/></g>'
+    '<g transform="rotate(-18 170 142)"><rect x="136" y="122" width="68" height="40" rx="20" fill="#C98B4B"/>'
+    '<path d="M152 132v20M168 130v24M184 132v20" stroke="#8A5A2B" stroke-width="4" stroke-linecap="round"/></g>'
+    '<circle cx="176" cy="82" r="18" fill="#D9534F"/><circle cx="170" cy="76" r="5" fill="#fff" opacity=".35"/>'
+    '<path d="M176 62c-4 0-8 3-9 6 4-1 7 0 9 2 2-2 5-3 9-2-1-3-5-6-9-6z" fill="#2E8B57"/>'
+    '<g fill="#F4A93B"><circle cx="150" cy="182" r="12"/><circle cx="176" cy="176" r="11"/><circle cx="124" cy="186" r="10"/></g>'
+    '<g fill="#F9C76B"><circle cx="150" cy="182" r="5"/><circle cx="176" cy="176" r="4.5"/><circle cx="124" cy="186" r="4"/></g>'
+    '</svg>' + LEAF.format(cls="l1") + LEAF.format(cls="l2") + LEAF.format(cls="l3") + '</div>')
+HOW = [("Tell us about you", "Set up a short profile so answers and plans fit you. It's optional."),
+       ("Scan, ask or plan", "Photograph a meal, chat with the assistant or build a weekly activity plan."),
+       ("Keep what helps", "Sign in to save your chats, scans and plans and come back to them any time.")]
+
 # ---------- Home ----------
 if page == "Home":
-    st.markdown(
-        '<div class="hero"><div><h1>What\'s on your plate?</h1>'
-        '<p>Snap a meal, ask a question or plan your week. Clear, friendly guidance in one place.</p></div>'
-        '<div class="plate" aria-hidden="true"></div></div>',
-        unsafe_allow_html=True)
+    me = st.session_state.get("user")
+    heading = f"Welcome back, {html.escape(me['name'])}" if me else "What's on your plate?"
+    with st.container(key="hero"):
+        text_col, art_col = st.columns([1.5, 1], gap="large", vertical_alignment="center")
+        with text_col:
+            st.markdown(f"<h1>{heading}</h1><p>Snap a meal, ask a question or plan your week. Clear, friendly "
+                        "guidance for eating well and staying active.</p>", unsafe_allow_html=True)
+            b1, b2 = st.columns(2, gap="small")
+            with b1, st.container(key="hero_scan"):
+                st.button("Scan a meal", key="hero_b1", on_click=go_to_page, args=("Food Scanner",))
+            with b2, st.container(key="hero_ask"):
+                st.button("Ask a question", key="hero_b2", on_click=go_to_page, args=("AI Assistant",))
+        with art_col:
+            st.markdown(HERO_ART, unsafe_allow_html=True)
+
+    tip = TIPS[date.today().toordinal() % len(TIPS)]
+    st.markdown(f'<div class="tip"><span>Tip of the day</span><p>{tip}</p></div>', unsafe_allow_html=True)
+
     if not st.session_state.profile:
         with st.container(key="panel_setup"):
             st.markdown("**Make NutriFit yours.** Add your age group, goals and allergies once, "
@@ -698,9 +796,17 @@ if page == "Home":
         for col, (name, text, btn, key) in zip(cols, tiles[r:r + 3]):
             with col:
                 with st.container(key=f"card_{key}"):
-                    st.markdown(f"<h3>{name}</h3><p>{text}</p>", unsafe_allow_html=True)
+                    st.markdown(f'<div class="icon">{ICONS[key]}</div><h3>{name}</h3><p>{text}</p>',
+                                unsafe_allow_html=True)
                     st.button(btn, key=f"btn_{key}", on_click=go_to_page, args=(name,))
         st.write("")
+
+    st.markdown("### How it works")
+    st.markdown('<div class="how">' + "".join(
+        f"<div><b>{i}</b><h4>{t}</h4><p>{d}</p></div>" for i, (t, d) in enumerate(HOW, 1)) + "</div>",
+        unsafe_allow_html=True)
+    st.markdown('<p class="home-foot">NutriFit AI is a learning tool, not medical advice.</p>',
+                unsafe_allow_html=True)
 
 # ---------- My Profile ----------
 elif page == "My Profile":
