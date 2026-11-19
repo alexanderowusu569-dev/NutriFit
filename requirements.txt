@@ -1,0 +1,5 @@
+streamlit>=1.40
+groq
+reportlab
+Pillow
+psycopg[binary]>=3.1
