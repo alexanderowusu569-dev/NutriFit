@@ -7,6 +7,7 @@ import json
 import html
 import base64
 import hashlib
+import pandas as pd
 import os
 import time
 import urllib.request
@@ -35,9 +36,11 @@ if not get_secret("GROQ_API_KEY"):
 
 groq_client = Groq(api_key=get_secret("GROQ_API_KEY"))
 AI_MODEL = get_secret("AI_MODEL", "qwen/qwen3.8-27b")
-FOOD_VISION_MODEL = get_secret("VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+FOOD_VISION_MODEL = get_secret("VISION_MODEL", "qwen/qwen3.8-27b")
 GEMINI_KEY = get_secret("GEMINI_API_KEY")
-GEMINI_MODEL = get_secret("GEMINI_MODEL", "gemini-3.5-flash-lite")
+GEMINI_MODEL = get_secret("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_THINKING = str(get_secret("GEMINI_THINKING", "medium")).lower()   # low, medium, high or off
+VISION_FALLBACK = str(get_secret("VISION_FALLBACK", "off")).lower() == "on"   # use Groq if Gemini fails
 
 # ---------- State ----------
 if "page" not in st.session_state:
@@ -361,6 +364,11 @@ h2.section::before{content:"";width:6px;height:1.15em;border-radius:4px;backgrou
 .tag.warn{background:#FBE3E1;}
 .scan-card .ingredients{max-height:13rem;overflow:auto;}
 
+/* Scan accuracy aids */
+.scan-done em{display:inline-block;margin-top:.3rem;font-style:normal;font-size:.78rem;font-weight:700;padding:.15rem .6rem;border-radius:99px;background:var(--tint);width:fit-content;}
+.scan-done em.high{background:#DDF0E3;}.scan-done em.medium{background:#FCEFD5;}.scan-done em.low{background:#FBE3E1;}
+.scan-card.items{margin-top:.8rem;}
+
 /* Motion: answers touch, plus one gentle ambient moment (the plate) */
 .stButton button,.stDownloadButton button,[class*="st-key-card_"],.info,
 [data-testid="stSidebar"] [role="radiogroup"] label{
@@ -428,8 +436,14 @@ _setup_db()
 
 
 # ---------- Online safeguards ----------
+class VisionError(Exception):
+    """Both photo AIs failed. The message already explains why, in plain words."""
+
+
 def friendly(e):
     """A short, safe explanation for an AI error (the raw error stays out of the page)."""
+    if isinstance(e, VisionError):
+        return str(e)
     t = str(e).lower()
     if "no module named" in t:
         return "a required package isn't installed, so please tell the app owner"
@@ -546,9 +560,8 @@ SCAN_SCHEMA = """{
   "is_food": true,
   "title": "short name of the meal",
   "confidence": "high, medium or low",
-  "portion_note": "the portion you assumed, in a few words",
-  "calories": 0,
-  "macros": {"protein_g": 0, "carbs_g": 0, "fat_g": 0},
+  "notes": "one sentence: what you used to judge the portions, and anything you were unsure about",
+  "items": [{"name": "Jollof rice", "grams": 0, "kcal_per_100g": 0, "protein_per_100g": 0, "carbs_per_100g": 0, "fat_per_100g": 0}],
   "details": [{"label": "Saturated fat", "value": "0 g"}],
   "ingredients": ["ingredient"],
   "vitamins": [{"name": "Vitamin C", "dv_percent": 0}],
@@ -565,85 +578,28 @@ def _gemini_client(key):
     return genai.Client(api_key=key)
 
 
-
-def vision_ai(system, text, photo, max_tokens=1200, temperature=0.2, max_side=1280, json_mode=False):
-    """Use Gemini for image analysis. Only use Groq if Gemini is not configured."""
-    image = prepare_image(photo, max_side)
-    st.session_state.gemini_error = ""
-
-    if GEMINI_KEY:
-        try:
-            from google.genai import types
-
-            config = types.GenerateContentConfig(
-                system_instruction=system or None,
-                temperature=temperature,
-                response_mime_type="application/json" if json_mode else None
-            )
-
-            reply = _gemini_client(GEMINI_KEY).models.generate_content(
-                model=GEMINI_MODEL,
-                config=config,
-                contents=[
-                    types.Part.from_bytes(
-                        data=image,
-                        mime_type="image/jpeg"
-                    ),
-                    text
-                ]
-            )
-
-            if not reply.text:
-                raise ValueError("Gemini returned an empty reply.")
-
-            st.session_state.vision_used = "Gemini"
-            return reply.text
-
-        except Exception as e:
-            print(f"Gemini scanner error ({GEMINI_MODEL}): {e}", flush=True)
-            st.session_state.gemini_error = friendly(e)
-            raise RuntimeError(f"Gemini scanner failed: {e}") from e
-
-    # Groq is only used when no Gemini key is configured.
-    encoded = base64.b64encode(image).decode("utf-8")
-
-    messages = (
-        [{"role": "system", "content": system}] if system else []
-    ) + [{
-        "role": "user",
-        "content": [
-            {"type": "text", "text": text},
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/jpeg;base64,{encoded}"
-                }
-            }
-        ]
-    }]
-
-    response = groq_client.chat.completions.create(
-        model=FOOD_VISION_MODEL,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens
-    )
-
-    st.session_state.vision_used = "Groq"
-    return response.choices[0].message.content
-
+def vision_ai(system, text, photo, max_tokens=1200, temperature=0.2, max_side=1280, json_mode=False, thinking=None):
     """Ask a vision model about a photo: Google Gemini first when a key is set, Groq as the backup."""
     image = prepare_image(photo, max_side)
     st.session_state.gemini_error = ""
     if GEMINI_KEY:
         try:
             from google.genai import types
-            config = types.GenerateContentConfig(
-                system_instruction=system or None, temperature=temperature,
-                response_mime_type="application/json" if json_mode else None)
-            reply = _gemini_client(GEMINI_KEY).models.generate_content(
-                model=GEMINI_MODEL, config=config,
-                contents=[types.Part.from_bytes(data=image, mime_type="image/jpeg"), text])
+            parts = [types.Part.from_bytes(data=image, mime_type="image/jpeg"), text]
+            reply, failure = None, None
+            for level in ([thinking, None] if thinking else [None]):   # retry without thinking if it is rejected
+                try:
+                    options = {"system_instruction": system or None,
+                               "response_mime_type": "application/json" if json_mode else None}
+                    if level:
+                        options["thinking_config"] = types.ThinkingConfig(thinking_level=level)
+                    reply = _gemini_client(GEMINI_KEY).models.generate_content(
+                        model=GEMINI_MODEL, config=types.GenerateContentConfig(**options), contents=parts)
+                    break
+                except Exception as e:
+                    failure = e
+            if reply is None:
+                raise failure
             if reply.text:
                 st.session_state.vision_used = "Gemini"
                 return reply.text
@@ -651,14 +607,23 @@ def vision_ai(system, text, photo, max_tokens=1200, temperature=0.2, max_side=12
         except Exception as e:
             print(f"Gemini error ({GEMINI_MODEL}): {e}", flush=True)     # visible in the app logs
             st.session_state.gemini_error = friendly(e)
+            if not VISION_FALLBACK:      # Gemini only: show the problem instead of a less accurate answer
+                raise VisionError(f"Gemini: {friendly(e)}") from e
     encoded = base64.b64encode(image).decode("utf-8")
     messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": [
         {"type": "text", "text": text},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}]}]
-    response = groq_client.chat.completions.create(
-        model=FOOD_VISION_MODEL, messages=messages, temperature=temperature, max_tokens=max_tokens)
+    try:
+        response = groq_client.chat.completions.create(
+            model=FOOD_VISION_MODEL, messages=messages, temperature=temperature,
+            max_tokens=max(max_tokens, 2500))      # the model may "think" before answering
+    except Exception as e:
+        print(f"Groq vision error ({FOOD_VISION_MODEL}): {e}", flush=True)
+        if st.session_state.get("gemini_error"):
+            raise VisionError(f"Gemini: {st.session_state.gemini_error}. Backup AI: {friendly(e)}") from e
+        raise
     st.session_state.vision_used = "Groq"
-    return response.choices[0].message.content
+    return clean(response.choices[0].message.content)
 
 
 def vision_note():
@@ -673,15 +638,35 @@ def vision_note():
     return ""
 
 
-def run_scan(photo):
+def run_scan(photo, hint="", size=""):
     """Send the photo to the vision model and return its raw reply."""
-    system = ("You are NutriFit AI Food Scanner. Look at the photo and reply with ONE JSON object "
-              "only: no markdown and no text before or after it. Estimate for the portion visible, "
-              "use round numbers, and lower the confidence when unsure. Never claim certainty. "
-              "Never comment on bacteria, freshness or food safety. Never diagnose conditions or "
-              "recommend restrictive diets. If the photo does not show food or a drink, reply "
-              '{"is_food": false}. Use exactly this structure:\n' + SCAN_SCHEMA)
-    return vision_ai(system, "Analyse this photo." + scan_note(), photo, json_mode=True)
+    system = (
+        "You are NutriFit AI Food Scanner, an expert at estimating meals from photos. Work like a "
+        "dietitian and reply with ONE JSON object only: no markdown and no text before or after it.\n"
+        "1. List every distinct food or drink you can see, and likely hidden ingredients such as cooking "
+        "oil, sauces or sugar. Identify regional dishes by their local names (for example jollof rice, "
+        "waakye, banku, fufu, kenkey, red red, ugali, injera, biryani) and allow for the oil and starch "
+        "typical of them. Never invent items you cannot see.\n"
+        "2. Estimate each item's weight in grams from visible scale references: the plate or bowl size "
+        "(a dinner plate is about 26 cm), cutlery, hands, cups or packaging. If there is no reference, "
+        "choose the middle of the plausible range, not an extreme.\n"
+        "3. Give typical nutrition per 100 g for each item as it is cooked and served, using standard "
+        "food composition values, including the oil and sauce it was cooked with.\n"
+        "4. Lower the confidence for mixed dishes, hidden ingredients or unfamiliar foods. Never claim "
+        "certainty. Never comment on bacteria, freshness or food safety. Never diagnose conditions or "
+        "recommend restrictive diets.\n"
+        'If the photo does not show food or a drink, reply {"is_food": false}. '
+        "details, vitamins, ingredients and allergens describe the whole meal as eaten. "
+        "Use exactly this structure:\n" + SCAN_SCHEMA)
+    extra = ""
+    if hint.strip():
+        extra += (f" The user says this is: {hint.strip()}. Trust that for what the food is, "
+                  "but still judge the amounts from the photo.")
+    if size and size != "Not sure":
+        extra += f" They describe the portion as {size.lower()}."
+    thinking = GEMINI_THINKING if GEMINI_THINKING in ("low", "medium", "high") else None
+    return vision_ai(system, "Analyse this photo." + extra + scan_note(), photo,
+                     max_side=1600, json_mode=True, thinking=thinking)
 
 
 def _num(v):
@@ -707,25 +692,72 @@ def parse_scan(raw):
         return None
 
 
+def _item_kcal(i):
+    """Calories of one item. If its calories and macros disagree a lot, trust the macros."""
+    per100 = i["kcal100"]
+    macro = 4 * i["protein100"] + 4 * i["carbs100"] + 9 * i["fat100"]
+    if per100 <= 0 or (macro > 0 and abs(per100 - macro) > 0.25 * max(per100, macro)):
+        per100 = macro or per100
+    return i["grams"] / 100 * per100
+
+
+def scan_totals(items):
+    """Add up the items. The arithmetic is done here, not by the AI."""
+    return {"calories": round(sum(_item_kcal(i) for i in items)),
+            "protein": round(sum(i["grams"] / 100 * i["protein100"] for i in items)),
+            "carbs": round(sum(i["grams"] / 100 * i["carbs100"] for i in items)),
+            "fat": round(sum(i["grams"] / 100 * i["fat100"] for i in items))}
+
+
+def _scale_text(text, ratio):
+    m = re.match(r"\s*(\d+(?:\.\d+)?)\s*(.*)", text or "")
+    return f"{round(float(m.group(1)) * ratio, 1):g} {m.group(2)}".strip() if m else text
+
+
+def apply_portions(d, grams):
+    """Recalculate a scan after the user corrects the grams of each item."""
+    new = []
+    for item, g in zip(d["items"], grams):
+        try:
+            g = max(0.0, min(float(g), 2000.0))
+        except (TypeError, ValueError):
+            g = item["grams"]
+        new.append({**item, "grams": g})
+    base = sum(i["grams"] for i in d["items"]) or 1
+    ratio = sum(i["grams"] for i in new) / base      # detail cards scale with the total amount
+    return {**d, "items": new, **scan_totals(new),
+            "details": [{**x, "value": _scale_text(x["value"], ratio)} for x in d["details"]],
+            "vitamins": [{**v, "dv": v["dv"] * ratio} for v in d["vitamins"]]}
+
+
 def normalise_scan(d):
     """Validate the model's JSON. Returns a clean dict, {"is_food": False}, or None if unreadable."""
     if not isinstance(d, dict):
         return None
     if d.get("is_food") is False:
         return {"is_food": False}
-    m = d.get("macros") if isinstance(d.get("macros"), dict) else {}
-    p, c, f = (_num(m.get(k)) for k in ("protein_g", "carbs_g", "fat_g"))
-    if None in (p, c, f):
+    items = []
+    for x in _list(d.get("items"), 12):
+        grams = _num(x.get("grams")) if isinstance(x, dict) else None
+        if not grams:
+            continue
+        items.append({"name": _txt(x.get("name"), 40) or "Food", "grams": min(grams, 2000.0),
+                      "kcal100": min(_num(x.get("kcal_per_100g")) or 0, 900.0),
+                      "protein100": min(_num(x.get("protein_per_100g")) or 0, 100.0),
+                      "carbs100": min(_num(x.get("carbs_per_100g")) or 0, 100.0),
+                      "fat100": min(_num(x.get("fat_per_100g")) or 0, 100.0)})
+    if not items:
         return None
     bal = d.get("balance") if isinstance(d.get("balance"), dict) else {}
     vit = [{"name": _txt(x.get("name"), 30), "dv": _num(x.get("dv_percent"))}
            for x in _list(d.get("vitamins"), 8) if isinstance(x, dict)]
+    conf = _txt(d.get("confidence"), 10).lower()
     return {
         "is_food": True,
         "title": _txt(d.get("title"), 70) or "Your meal",
-        "calories": round(_num(d.get("calories")) or (4 * p + 4 * c + 9 * f)),
-        "protein": round(p), "carbs": round(c), "fat": round(f),
-        "portion_note": _txt(d.get("portion_note"), 120),
+        "confidence": conf if conf in ("high", "medium", "low") else "",
+        "portion_note": _txt(d.get("notes") or d.get("portion_note"), 180),
+        "items": items, **scan_totals(items),
         "details": [{"label": _txt(x.get("label"), 30), "value": _txt(x.get("value"), 20)}
                     for x in _list(d.get("details"), 8) if isinstance(x, dict)],
         "ingredients": [_txt(x, 60) for x in _list(d.get("ingredients"), 12)],
@@ -754,9 +786,19 @@ def scan_summary_html(d):
     balance = (f'<div class="balance{tone}"><span>Meal balance</span><b>{esc(bal["rating"])}</b>'
                f'<p>{esc(bal["reason"])}</p></div>') if bal["rating"] else ""
     note = f'<p class="muted-note">{esc(d["portion_note"])}</p>' if d["portion_note"] else ""
-    return (f'<div class="scan-done"><b>Analysis complete</b><span>{esc(d["title"])}</span></div>'
+    conf = d.get("confidence") or ""
+    badge = f'<em class="{conf}">Confidence: {conf}</em>' if conf else ""
+    if conf == "low":
+        note += ('<p class="muted-note">Low confidence. Name the food in the box and scan again, '
+                 "or correct the portions.</p>")
+    items = ""
+    if d.get("items"):
+        rows = "".join(f'<div class="row"><span>{esc(i["name"])}</span>'
+                       f'<b>{round(i["grams"])} g, {round(_item_kcal(i))} kcal</b></div>' for i in d["items"])
+        items = f'<div class="scan-card items"><h4>What the AI saw</h4>{rows}</div>'
+    return (f'<div class="scan-done"><b>Analysis complete</b><span>{esc(d["title"])}</span>{badge}</div>'
             f'<div class="kcal"><b>{d["calories"]}</b><span>kcal, estimated total</span></div>'
-            f'<div class="macros">{cards}</div><div class="split">{bar}</div>{balance}{note}')
+            f'<div class="macros">{cards}</div><div class="split">{bar}</div>{balance}{items}{note}')
 
 
 def scan_detail_html(d):
@@ -1404,6 +1446,10 @@ elif page == "Food Scanner":
             photo = st.file_uploader("Upload a food image", type=["png", "jpg", "jpeg"])
             if photo:
                 st.image(photo, use_container_width=True)
+        hint = st.text_input("What is it? (optional)", max_chars=120,
+                             placeholder="e.g. waakye with fish, gari and shito",
+                             help="Naming the food helps the AI a lot, especially for local dishes.")
+        size = st.selectbox("Portion size (optional)", ["Not sure", "Small", "Medium", "Large"])
         go = st.button("Analyse food") if photo else False
 
     key = hashlib.md5(photo.getvalue()).hexdigest() if photo else None
@@ -1411,30 +1457,45 @@ elif page == "Food Scanner":
         with right:
             try:
                 with st.spinner("Analysing your food..."):
-                    data = normalise_scan(parse_scan(run_scan(photo)))
-                st.session_state.scan = {"key": key, "data": data}
+                    data = normalise_scan(parse_scan(run_scan(photo, hint, size)))
+                st.session_state.scan = {"key": key, "data": data, "id": time.time()}
             except Exception as e:
                 st.session_state.scan = {"key": key, "data": None, "error": friendly(e)}
 
     scan = st.session_state.get("scan")
     ready = bool(photo and scan and scan["key"] == key)
+    shown = None
     with right:
         if not photo:
             st.info("Add a photo to get started.")
         elif not ready:
             st.info("Select Analyse food to see the results here.")
+        elif scan["data"] is None and scan.get("error"):
+            st.error(f"The scanner couldn't analyse this photo: {scan['error']}.")
         elif scan["data"] is None:
             st.warning("The scanner couldn't read this photo clearly. Try again with better light "
-                       "or a closer shot." + (f" ({scan['error']})" if scan.get("error") else ""))
+                       "or a closer shot.")
         elif not scan["data"].get("is_food"):
             st.info("This doesn't look like food or a drink. Try another photo.")
         else:
             d = scan["data"]
+            if d.get("items"):
+                with st.expander("Check the portions", expanded=True):
+                    st.caption("Change the grams if the AI guessed wrong. The totals update.")
+                    table = pd.DataFrame({"Food": [i["name"] for i in d["items"]],
+                                          "Grams": [round(i["grams"]) for i in d["items"]]})
+                    edited = st.data_editor(
+                        table, hide_index=True, disabled=["Food"], use_container_width=True,
+                        key=f"portions_{scan.get('id')}",
+                        column_config={"Grams": st.column_config.NumberColumn("Grams", min_value=0,
+                                                                              max_value=2000, step=5)})
+                d = apply_portions(d, list(edited["Grams"]))
+            shown = d
             st.markdown(scan_summary_html(d), unsafe_allow_html=True)
             allergy_alert(" ".join([d["title"], *d["ingredients"], *d["allergens"]]))
 
     if ready and scan["data"] and scan["data"].get("is_food"):
-        d = scan["data"]
+        d = shown or scan["data"]
         st.markdown(scan_detail_html(d), unsafe_allow_html=True)
         st.caption("All values are estimates from a photo, not lab measurements. "
                    "Actual values depend on ingredients and portion size.")
