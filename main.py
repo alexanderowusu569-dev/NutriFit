@@ -37,7 +37,7 @@ groq_client = Groq(api_key=get_secret("GROQ_API_KEY"))
 AI_MODEL = get_secret("AI_MODEL", "qwen/qwen3.8-27b")
 FOOD_VISION_MODEL = get_secret("VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 GEMINI_KEY = get_secret("GEMINI_API_KEY")
-GEMINI_MODEL = get_secret("GEMINI_MODEL", "gemini-flash-latest")
+GEMINI_MODEL = get_secret("GEMINI_MODEL", "gemini-2.5-flash")
 
 # ---------- State ----------
 if "page" not in st.session_state:
