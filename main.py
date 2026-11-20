@@ -55,6 +55,14 @@ if "profile" not in st.session_state:
     st.session_state.profile = {}
 
 
+def stretch_button(label, **kwargs):
+    """A button that fills its column (the setting is named differently across Streamlit versions)."""
+    try:
+        return st.button(label, width="stretch", **kwargs)
+    except TypeError:
+        return st.button(label, use_container_width=True, **kwargs)
+
+
 def go_to_page(target):
     st.session_state.page = target
 
@@ -277,13 +285,16 @@ h3{font-size:1.15rem!important;font-weight:700!important;}
   border-radius:24px;padding:2.4rem 2.8rem;margin-bottom:1.4rem;}
 .st-key-hero::before{content:"";position:absolute;right:-90px;top:-90px;width:340px;height:340px;border-radius:50%;
   background:radial-gradient(circle,rgba(244,169,59,.3),transparent 70%);pointer-events:none;}
-.st-key-hero h1{color:#F5F6EF!important;font-size:2.7rem;font-weight:800;line-height:1.08;margin:0 0 .8rem;}
+.stApp .st-key-hero .hero-title{color:#F5F6EF!important;-webkit-text-fill-color:#F5F6EF!important;font-size:2.7rem;font-weight:800;line-height:1.08;letter-spacing:-.02em;margin:0 0 .8rem;}
 .st-key-hero p{color:#CFE3D8!important;font-size:1.08rem;max-width:42ch;margin:0 0 1.3rem;}
 .st-key-hero_scan button{background:var(--accent);border-color:var(--accent);}
 .st-key-hero_scan button p{color:var(--ink)!important;}
 .st-key-hero_scan button:hover{background:#F7BC62;border-color:#F7BC62;}
 .st-key-hero_ask button{background:transparent;border:1px solid rgba(245,246,239,.55);}
 .st-key-hero_ask button:hover{background:rgba(255,255,255,.12);border-color:#fff;}
+/* Every button fills its column (newer Streamlit sizes them to their text) */
+.stButton,.stDownloadButton,.stElementContainer:has(.stButton),.stElementContainer:has(.stDownloadButton),
+div[data-testid="stElementContainer"]:has(> div > button){width:100%!important;}
 /* Hero buttons: slim, equal width, text centred */
 .st-key-hero_scan,.st-key-hero_ask,.st-key-hero_scan .stButton,.st-key-hero_ask .stButton{width:100%;}
 .st-key-hero_scan button,.st-key-hero_ask button{width:100%;min-height:44px;padding:.4rem 1rem;border-radius:10px;
@@ -316,7 +327,7 @@ h3{font-size:1.15rem!important;font-weight:700!important;}
 .how h4{margin:0 0 .25rem;font-size:1rem!important;font-weight:700;}
 .how p{margin:0;color:var(--muted)!important;font-size:.92rem;}
 .home-foot{text-align:center;color:var(--muted)!important;font-size:.88rem;margin-top:2rem;}
-@media(max-width:800px){.how{grid-template-columns:1fr;}.st-key-hero{padding:1.6rem;}.st-key-hero h1{font-size:2rem;}
+@media(max-width:800px){.how{grid-template-columns:1fr;}.st-key-hero{padding:1.6rem;}.st-key-hero .hero-title{font-size:2rem;}
   .tip{flex-direction:column;align-items:flex-start;gap:.5rem;}}
 
 /* Page backdrop */
@@ -1304,13 +1315,14 @@ if page == "Home":
     with st.container(key="hero"):
         text_col, art_col = st.columns([1.5, 1], gap="large", vertical_alignment="center")
         with text_col:
-            st.markdown(f"<h1>{heading}</h1><p>Snap a meal, ask a question or plan your week. Clear, friendly "
-                        "guidance for eating well and staying active.</p>", unsafe_allow_html=True)
+            st.markdown(f'<div class="hero-title" role="heading" aria-level="1">{heading}</div>'
+                        '<p>Snap a meal, ask a question or plan your week. Clear, friendly '
+                        'guidance for eating well and staying active.</p>', unsafe_allow_html=True)
             b1, b2 = st.columns(2, gap="small")
             with b1, st.container(key="hero_scan"):
-                st.button("Scan a meal", key="hero_b1", on_click=go_to_page, args=("Food Scanner",))
+                stretch_button("Scan a meal", key="hero_b1", on_click=go_to_page, args=("Food Scanner",))
             with b2, st.container(key="hero_ask"):
-                st.button("Ask a question", key="hero_b2", on_click=go_to_page, args=("AI Assistant",))
+                stretch_button("Ask a question", key="hero_b2", on_click=go_to_page, args=("AI Assistant",))
         with art_col:
             st.markdown(HERO_ART, unsafe_allow_html=True)
 
