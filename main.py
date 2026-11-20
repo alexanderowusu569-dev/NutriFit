@@ -454,6 +454,9 @@ def friendly(e):
     t = str(e).lower()
     if "no module named" in t:
         return "a required package isn't installed, so please tell the app owner"
+    if any(w in t for w in ("perday", "per day", "daily", "limit: 0")):
+        return ("the free allowance for this AI model has run out (or it has none), so please try again later "
+                "or ask the app owner to switch models or turn on billing")
     if "429" in t or "rate limit" in t or "resource_exhausted" in t or "quota" in t:
         return "the AI service is busy right now, so please wait a minute and try again"
     if "404" in t or "not_found" in t or "is not found" in t:
@@ -461,6 +464,18 @@ def friendly(e):
     if "401" in t or "api key" in t or "authentication" in t:
         return "the app's AI key isn't working, so please tell the app owner"
     return "something went wrong, so please try again"
+
+
+def _retry_wait(e):
+    """Seconds to wait before retrying a busy or overloaded error, or None if waiting won't help."""
+    t = str(e).lower()
+    if any(w in t for w in ("perday", "per day", "daily", "limit: 0")):
+        return None
+    if any(w in t for w in ("429", "resource_exhausted", "503", "unavailable", "overloaded")):
+        m = re.search(r"retry\w*\D{0,12}(\d+(?:\.\d+)?)\s*s", t)
+        wait = float(m.group(1)) + 1 if m else 4.0
+        return wait if wait <= 20 else None
+    return None
 
 
 def limit_ok():
@@ -600,11 +615,21 @@ def vision_ai(system, text, photo, max_tokens=1200, temperature=0.2, max_side=12
                                "response_mime_type": "application/json" if json_mode else None}
                     if level:
                         options["thinking_config"] = types.ThinkingConfig(thinking_level=level)
-                    reply = _gemini_client(GEMINI_KEY).models.generate_content(
-                        model=GEMINI_MODEL, config=types.GenerateContentConfig(**options), contents=parts)
+                    for attempt in range(3):          # a busy service often clears within seconds
+                        try:
+                            reply = _gemini_client(GEMINI_KEY).models.generate_content(
+                                model=GEMINI_MODEL, config=types.GenerateContentConfig(**options), contents=parts)
+                            break
+                        except Exception as e:
+                            wait = _retry_wait(e)
+                            if wait is None or attempt == 2:
+                                raise
+                            time.sleep(wait)
                     break
                 except Exception as e:
                     failure = e
+                    if "thinking" not in str(e).lower():
+                        break
             if reply is None:
                 raise failure
             if reply.text:
@@ -615,7 +640,7 @@ def vision_ai(system, text, photo, max_tokens=1200, temperature=0.2, max_side=12
             print(f"Gemini error ({GEMINI_MODEL}): {e}", flush=True)     # visible in the app logs
             st.session_state.gemini_error = friendly(e)
             if not VISION_FALLBACK:      # Gemini only: show the problem instead of a less accurate answer
-                raise VisionError(f"Gemini: {friendly(e)}") from e
+                raise VisionError(f"Gemini ({GEMINI_MODEL}): {friendly(e)}") from e
     encoded = base64.b64encode(image).decode("utf-8")
     messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": [
         {"type": "text", "text": text},
